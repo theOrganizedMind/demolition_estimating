@@ -43,7 +43,7 @@ Tkinter-based GUI for selecting a project description and launching the appropri
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/yourusername/demolition_estimating.git
+    git clone https://github.com/theOrganizedMind/demolition_estimating.git
     ```
 
 2. Navigate to the project directory:

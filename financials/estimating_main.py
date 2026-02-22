@@ -15,7 +15,10 @@ import xgboost as xgb
 from datetime import datetime
 from idlelib.tooltip import Hovertip
 
-
+# ============================================================================ #
+# ==================================== INFO ================================== #
+# ============================================================================ #
+#
 # ============================================================================ #
 # ==================================== TODO ================================== #
 # ============================================================================ #
@@ -31,9 +34,9 @@ def fetch_data_from_csv():
     """
     Fetches project data from a CSV file and processes it.
 
-    This function reads data from a CSV file named "project_test_data(01122025).csv",
-    sets the 'Job Number' column as the index, and calculates the 'Profit and Loss %'
-    for each project. The processed data is then returned as a DataFrame.
+    This function reads data from a CSV file, sets the 'Job Number' column as the
+    index, and calculates the 'Profit and Loss %' for each project. 
+    The processed data is then returned as a DataFrame.
 
     Parameters:
     None
@@ -42,8 +45,8 @@ def fetch_data_from_csv():
     DataFrame: A pandas DataFrame containing the project data with an additional
     'Profit and Loss %' column.
     """
-    data = pd.read_csv("project_test_data(01122025).csv", 
-                        index_col='Job Number') # Includes Structure Type
+    data = pd.read_csv("financials/sample_data/test_company_project_data_(02122026).csv", 
+                        index_col='Job Number') # Includes Structure Type and Estimator
     df = pd.DataFrame(data)
 
     # Data with 'Profit and Loss %'

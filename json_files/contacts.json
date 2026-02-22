@@ -1,0 +1,16 @@
+[
+    {
+        "company": "Example Corp",
+        "billing address": "123 IDK Lane",
+        "client": "John Doe",
+        "phone": "615-555-1234",
+        "email": "jdoe@examplecorp.com"
+    },
+    {
+        "company": "Example Company, LLC",
+        "billing address": "123 Belmont Avenue",
+        "client": "Jim Black",
+        "phone": "615-534-1522",
+        "email": "jblack@example-company.com"
+    }
+]

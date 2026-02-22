@@ -1,0 +1,26 @@
+Job Number,Awarded Date,Estimator,Description,Structure Type,SqFt,Bid Price,Job Cost
+1,2024-01-17,Estimator One,Interior Demolition,Other,12000,25000,12500
+2,2024-01-27,Estimator One,Interior Demolition,Other,11500,24500,12250
+3,2023-11-16,Estimator One,Building Demo,Metal,25000,65000,32500
+4,2024-01-02,Estimator One,House Demo,Wood,5500,9800,4900
+5,2024-01-25,Estimator One,House Demo,Brick or Block,5000,7800,3900
+6,2023-10-19,Estimator One,Building Demo,Metal,28500,60000,30000
+7,2023-12-14,Estimator Two,Building Demo,Wood,25000,58500,29250
+8,2024-02-16,Estimator Two,Interior Demolition,Other,12000,26500,13250
+9,2024-02-20,Estimator Two,Interior Demolition,Other,11000,28500,14250
+10,2024-01-18,Estimator Two,Building Demo,Metal,26500,62500,31250
+11,2024-04-17,Estimator Two,Interior Demolition,Other,13500,42000,28000
+12,2024-02-23,Estimator Two,Building Demo,Brick or Block,27800,58900,48600
+13,2024-04-25,Estimator Two,Interior Demolition,Other,11800,32500,22300
+14,2024-03-14,Estimator Three,Building Demo,Metal,22500,63250,48740
+15,2024-02-16,Estimator Three,House Demo,Wood,5800,15400,7800
+16,2024-02-27,Estimator Three,House Demo,Brick or Block,6200,18500,9200
+17,2024-04-18,Estimator Three,House Demo,Wood,5500,13800,7800
+18,2024-04-19,Estimator Four,Building Demo,Metal,22500,58700,32900
+19,2024-05-16,Estimator Four,Interior Demolition,Other,12500,31250,21500
+20,2024-05-25,Estimator Four,House Demo,Wood,4800,10200,6800
+21,2024-04-19,Estimator Four,Building Demo,Wood,50000,125000,75000
+22,2024-06-13,Estimator Four,Interior Demolition,Other,18500,67300,41300
+23,2024-05-31,Estimator Four,House Demo,Brick or Block,5200,10500,7200
+24,2024-04-11,Estimator Four,Building Demo,Metal,51250,128000,92350
+25,2024-06-14,Estimator Four,Interior Demolition,Other,18900,71250,48693 

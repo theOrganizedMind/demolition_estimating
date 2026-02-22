@@ -1,0 +1,23 @@
+[
+    {
+        "Project Type": "Interior Demolition",
+        "Equipment": "19' Scissor Lift",
+        "Day": "150",
+        "Week": "600",
+        "Month": "1800"
+    },
+    {
+        "Project Type": "Building Demo",
+        "Equipment": "350 Excavator",
+        "Day": "1450",
+        "Week": "3500",
+        "Month": "5200"
+    },
+    {
+        "Project Type": "Other",
+        "Equipment": "Mini Ex",
+        "Day": "725",
+        "Week": "1300",
+        "Month": "4800"
+    }
+]

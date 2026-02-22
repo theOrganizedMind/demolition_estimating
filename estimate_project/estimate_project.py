@@ -5,11 +5,18 @@ from building_demo import BuildingDemo
 from interior_demo import InteriorDemo
 from house_demo import HouseDemo
 
-# ---------------------------------------------------------------------------- #
+
+# ============================================================================ #
+# ==================================== INFO ================================== #
+# ============================================================================ #
 # Create the first window where the user selects the project description.
 # Based off the desription, the appropriate class will be chosen and the user 
-# will be prompted to enter the project details. 
-# ---------------------------------------------------------------------------- #
+# will be prompted to enter the project details.
+# ============================================================================ #
+# ==================================== TODO ================================== #
+# ============================================================================ #
+# TODO: 
+# ============================================================================ #
 
 
 def estimate_project():

@@ -2,13 +2,32 @@ from datetime import datetime
 from tkinter import messagebox, Text, Checkbutton, BooleanVar
 from tkcalendar import DateEntry
 import tkinter as tk
-import json
 import os
+import logging
 from docx import Document
-from dotenv import load_dotenv
+import pandas as pd
+import matplotlib.pyplot as plt
+import mplcursors
+from tkinter import *
+from tkinter import ttk, messagebox
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV, KFold
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import Ridge
+from datetime import datetime
+from idlelib.tooltip import Hovertip
 
+from building_demo import BuildingDemo
+from interior_demo import InteriorDemo
+from house_demo import HouseDemo
 from contact_book import ContactBook
 from equipment_book import EquipmentBook
+from postgresql import get_db_connection
+
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================ #
 # ================================= INFO ===================================== #
@@ -17,8 +36,11 @@ from equipment_book import EquipmentBook
 # ============================================================================ #
 # ================================= TODO ===================================== #
 # ============================================================================ #
-#
+# TODO: 
+# Add PostgreSQL variables to .env before running program. 
+# See postgresql.py for required parameters.
 # ============================================================================ #
+
 
 FONT = "Times New Roman"
 FONT_SIZE = 13
@@ -27,12 +49,225 @@ TITLE_FONT_SIZE = 16
 PAGE_HEIGHT = 35
 PAGE_WIDTH = 75
 
-load_dotenv()
-
 collected_data = {}
 
 todays_date = datetime.now().strftime("%m%d%Y")
 downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+
+# =========================================================================== #
+# ======================== Get Data from PostgreSQL ========================= #
+# =========================================================================== #
+
+def fetch_data_from_postgresql():
+    """Fetch project data from PostgreSQL and shape it for model training."""
+    query = """
+        SELECT
+            job_number AS "Job Number",
+            awarded_date AS "Awarded Date",
+            project_description AS "Description",
+            structure_type AS "Structure Type",
+            sqft AS "SqFt",
+            bid_price AS "Bid Price",
+            job_cost AS "Job Cost",
+            estimator AS "Estimator"
+        FROM project;
+    """
+
+    with get_db_connection() as conn:
+        df = pd.read_sql_query(query, conn)
+
+    if df.empty:
+        messagebox.showwarning(
+            "No Project Data",
+            "No project rows were returned from PostgreSQL table 'project'.",
+        )
+        return df
+
+    df['SqFt'] = pd.to_numeric(df['SqFt'], errors='coerce')
+    df['Bid Price'] = pd.to_numeric(df['Bid Price'], errors='coerce')
+    df['Job Cost'] = pd.to_numeric(df['Job Cost'], errors='coerce')
+    df['Awarded Date'] = pd.to_datetime(df['Awarded Date'], errors='coerce')
+
+    # Drop rows with missing model-critical values to keep downstream training stable.
+    df = df.dropna(subset=['Job Number', 'Description', 'Structure Type', 'SqFt', 'Bid Price', 'Job Cost'])
+    df['SqFt'] = df['SqFt'].astype(int)
+    df['Profit and Loss %'] = round(((df['Bid Price'] - df['Job Cost']) / df['Bid Price']) * 100, 2)
+    df = df.set_index('Job Number')
+
+    print("\nData from PostgreSQL")
+    print("\nDataframe with 'Profit and Loss %' column:")
+    print(df.tail())
+    return df
+
+# =========================================================================== #
+# ======================= New Estimate costs using models =================== #
+# =========================================================================== #
+
+def train_models(df):
+    """
+    Train two tuned ML model families for bid and cost prediction.
+
+    Models:
+    - Ridge Regression: regularized linear baseline.
+    - Random Forest: non-linear ensemble with constraints to reduce overfitting.
+
+    Both models use cross-validation and hyperparameter tuning.
+
+    Parameters:
+    df (DataFrame): The input DataFrame containing the features and target variables.
+
+        Returns:
+        tuple: Tuned estimators, holdout sets, and CV summary values.
+    """
+    X = df[['Description', 'Structure Type', 'SqFt']]
+    y_bid = df['Bid Price']
+    y_cost = df['Job Cost']
+
+    # Split the data into training and testing sets
+    X_train, X_test, y_bid_train, y_bid_test, y_cost_train, y_cost_test = \
+        train_test_split(X, y_bid, y_cost, test_size=0.2, random_state=42)
+    
+    # Define the column transformer for one-hot encoding
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', OneHotEncoder(), ['Description', 'Structure Type']),
+            ('num', StandardScaler(), ['SqFt'])
+        ])
+
+    # Use a dynamic CV split count so this also works with smaller datasets.
+    cv_splits = min(5, max(2, len(X_train) // 4))
+    cv_strategy = KFold(n_splits=cv_splits, shuffle=True, random_state=42)
+
+    # Ridge (regularized linear model) with CV tuning.
+    ridge_bid_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('model', Ridge())
+    ])
+    ridge_cost_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('model', Ridge())
+    ])
+    ridge_params = {
+        'model__alpha': [0.01, 0.1, 1.0, 5.0, 10.0, 25.0, 50.0, 100.0]
+    }
+
+    ridge_bid_search = GridSearchCV(
+        ridge_bid_pipeline,
+        ridge_params,
+        cv=cv_strategy,
+        scoring='neg_mean_absolute_error',
+        n_jobs=1,
+    )
+    ridge_bid_search.fit(X_train, y_bid_train)
+
+    ridge_cost_search = GridSearchCV(
+        ridge_cost_pipeline,
+        ridge_params,
+        cv=cv_strategy,
+        scoring='neg_mean_absolute_error',
+        n_jobs=1,
+    )
+    ridge_cost_search.fit(X_train, y_cost_train)
+
+    # Random Forest with conservative defaults and CV tuning to reduce overfitting.
+    rf_bid_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('model', RandomForestRegressor(random_state=42, n_jobs=1))
+    ])
+    rf_cost_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('model', RandomForestRegressor(random_state=42, n_jobs=1))
+    ])
+    rf_params = {
+        'model__n_estimators': [200, 350, 500],
+        'model__max_depth': [5, 8, 12, None],
+        'model__min_samples_split': [2, 4, 6, 10],
+        'model__min_samples_leaf': [1, 2, 4],
+        'model__max_features': ['sqrt', 0.7, 1.0],
+        'model__bootstrap': [True]
+    }
+
+    rf_bid_search = RandomizedSearchCV(
+        rf_bid_pipeline,
+        rf_params,
+        n_iter=15,
+        cv=cv_strategy,
+        scoring='neg_mean_absolute_error',
+        n_jobs=1,
+        random_state=42,
+    )
+    rf_bid_search.fit(X_train, y_bid_train)
+
+    rf_cost_search = RandomizedSearchCV(
+        rf_cost_pipeline,
+        rf_params,
+        n_iter=15,
+        cv=cv_strategy,
+        scoring='neg_mean_absolute_error',
+        n_jobs=1,
+        random_state=42,
+    )
+    rf_cost_search.fit(X_train, y_cost_train)
+
+    cv_results = {
+        'cv_splits': cv_splits,
+        'ridge_bid_cv_mae': abs(ridge_bid_search.best_score_),
+        'ridge_cost_cv_mae': abs(ridge_cost_search.best_score_),
+        'rf_bid_cv_mae': abs(rf_bid_search.best_score_),
+        'rf_cost_cv_mae': abs(rf_cost_search.best_score_),
+        'ridge_bid_best_params': ridge_bid_search.best_params_,
+        'ridge_cost_best_params': ridge_cost_search.best_params_,
+        'rf_bid_best_params': rf_bid_search.best_params_,
+        'rf_cost_best_params': rf_cost_search.best_params_,
+    }
+
+    return ridge_bid_search.best_estimator_, ridge_cost_search.best_estimator_, \
+        rf_bid_search.best_estimator_, rf_cost_search.best_estimator_, X_test, \
+        y_bid_test, y_cost_test, cv_results
+
+# ===========================================================================
+# ======================= New Estimate costs using models ===================
+# ===========================================================================
+def estimate_costs(models, square_feet, description, structure_type):
+    """
+    Estimate bid prices and job costs using multiple machine learning models.
+
+    Parameters:
+    models (list): A list containing trained models in this order:
+    [ridge_bid_model, ridge_cost_model, rf_bid_model, rf_cost_model]
+    square_feet (float): The square footage of the project.
+    description (str): A description of the project(e.g., Building Demo, 
+    House Demo, Interior Demolition).
+    structure_type (str): The type of structure (e.g., Wood, Metal, Other).
+
+    Returns:
+    tuple: A tuple containing four estimated values in this order:
+        (ridge_estimated_bid_price, ridge_estimated_job_cost,
+            rf_estimated_bid_price, rf_estimated_job_cost)
+    """
+    ridge_bid_model, ridge_cost_model, rf_bid_model, rf_cost_model = models[:4]
+    input_data = pd.DataFrame([[description, structure_type, square_feet]], 
+                            columns=['Description', 'Structure Type', 'SqFt'])
+    ridge_estimated_bid_price = ridge_bid_model.predict(input_data)[0]
+    ridge_estimated_job_cost = ridge_cost_model.predict(input_data)[0]
+    rf_estimated_bid_price = rf_bid_model.predict(input_data)[0]
+    rf_estimated_job_cost = rf_cost_model.predict(input_data)[0]
+
+    return ridge_estimated_bid_price, ridge_estimated_job_cost, \
+        rf_estimated_bid_price, rf_estimated_job_cost
+
+# ===========================================================================
+# ========================== Main Program =================================== 
+# ===========================================================================
+def on_closing_estimates(info):
+    if info:
+        info.quit()
+        info.destroy()
+
+
+def create_tooltip(widget, text):
+    """Creates tooltips for the tkinter launch_demo_window widgets"""
+    Hovertip(widget, text, hover_delay=500)
 
 
 def save_to_word(data, file_path):
@@ -89,6 +324,8 @@ def create_navigation_menu(root):
     navigate_menu = tk.Menu(menu_bar, tearoff=0)
     navigate_menu.add_command(label="Project Overview", 
                               command=lambda: show_page("Project Overview"))
+    navigate_menu.add_command(label="Estimating Details",
+                              command=lambda: show_page("Estimating Details"))
     navigate_menu.add_command(label="Project-Specific Details", 
                               command=lambda: show_page("Project-Specific Details"))
     navigate_menu.add_command(label="Methodology and Approach", 
@@ -118,6 +355,7 @@ def create_navigation_menu(root):
     # Configure the menu bar in the root window
     root.config(menu=menu_bar)
 
+
 def show_toast(message, message_type="info"):
     """
     Show a toast-like notification.
@@ -136,9 +374,7 @@ def show_toast(message, message_type="info"):
 
     # Set background color based on message type
     bg_color = "green" if message_type == "info" else "orange" if message_type == "warning" else "red"
-    # tk.Label(toast, text=message, bg=bg_color, fg="white", font=(FONT, FONT_SIZE)).pack(fill="both", expand=True)
 
-    # fg_color = "green" if message_type == "info" else "orange" if message_type == "warning" else "red"
     tk.Label(toast, text=message, bg=bg_color, fg="black", font=(FONT, FONT_SIZE)).pack(fill="both", expand=True)
 
     # Auto-dismiss the toast after 3 seconds
@@ -155,7 +391,6 @@ def show_toast(message, message_type="info"):
 
 
 contact_book = ContactBook()
-
 
 # ============================================================================ #
 # ============================= Main GUI ===================================== #
@@ -337,10 +572,428 @@ def create_project_overview_page():
         }
 
         # Proceed to the next page
-        show_page("Project-Specific Details")
+        show_page("Estimating Details")
 
     tk.Button(page, text="Next", 
               command=save_project_overview).grid(row=13, column=1, pady=20, sticky="e")
+
+
+def create_project_estimating_page():
+    page = tk.Frame(root)
+    pages["Estimating Details"] = page
+
+    tk.Label(page, text="Project-Specific Estimating Details",
+            font=(TITLE_FONT, TITLE_FONT_SIZE)).grid(row=0, column=0, columnspan=2, pady=10)
+    tk.Label(
+        page,
+        text=(
+            "Use this page to run historical + ML estimating and save the results "
+            "into the proposal document's Estimating Details section."
+        ),
+        font=(FONT, FONT_SIZE),
+        wraplength=700,
+        fg="darkgreen",
+        justify="left",
+    ).grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+    model_cache = {"df": None, "models": None}
+    estimate_status_var = tk.StringVar(
+        value="No estimate saved yet. Complete inputs and click 'Run Estimate'."
+    )
+
+    description_var = tk.StringVar()
+    structure_var = tk.StringVar()
+    sqft_var = tk.StringVar()
+    lower_limit_var = tk.StringVar()
+    upper_limit_var = tk.StringVar()
+    equipment_cost_var = tk.StringVar()
+    disposal_cost_var = tk.StringVar()
+    num_days_var = tk.StringVar()
+    num_workers_var = tk.StringVar()
+
+    def ensure_model_data_loaded():
+        if model_cache["df"] is not None and model_cache["models"] is not None:
+            return True
+
+        try:
+            model_df = fetch_data_from_postgresql()
+            if model_df.empty:
+                messagebox.showwarning("No Project Data", 
+                                       "No project rows were returned from PostgreSQL table 'project'.")
+                return False
+            model_cache["df"] = model_df
+            model_cache["models"] = train_models(model_df)
+            return True
+        except Exception:
+            logger.exception("Unable to load estimating data")
+            messagebox.showerror(
+                "Estimating Data Error",
+                "Unable to load estimating data. Please verify database settings and try again.",
+            )
+            return False
+
+    def on_description_change(event=None):
+        if description_var.get() == "Interior Demolition":
+            structure_var.set("Other")
+
+    def _safe_profit_percent(bid_price, job_cost):
+        if bid_price == 0:
+            return 0.0
+        return round(((bid_price - job_cost) / bid_price) * 100, 2)
+
+    def build_project_report(description_value, structure_value, sqft_value, equipment_cost_value,
+                             disposal_cost_value, num_days_value, num_workers_value):
+        """Build class-based demolition report text for Word output."""
+        if description_value == "Interior Demolition":
+            project = InteriorDemo(
+                description_value,
+                structure_value,
+                total_sqft=sqft_value,
+                total_equipment_cost=equipment_cost_value,
+                total_disposal_cost=disposal_cost_value,
+                num_days=num_days_value,
+                num_guys=num_workers_value,
+            )
+        elif description_value == "House Demo":
+            project = HouseDemo(
+                description_value,
+                structure_value,
+                total_sqft=sqft_value,
+                total_equipment_cost=equipment_cost_value,
+                total_disposal_cost=disposal_cost_value,
+                num_days=num_days_value,
+                num_guys=num_workers_value,
+            )
+        else:
+            project = BuildingDemo(
+                description_value,
+                structure_value,
+                total_sqft=sqft_value,
+                total_equipment_cost=equipment_cost_value,
+                total_disposal_cost=disposal_cost_value,
+                num_days=num_days_value,
+                num_guys=num_workers_value,
+            )
+
+        if not project.validate_input_data():
+            return None
+
+        return project.generate_detailed_report()
+
+    def run_estimate_and_store():
+        description_value = description_var.get().strip()
+        structure_value = structure_var.get().strip()
+        equipment_cost = equipment_cost_var.get().strip()
+        disposal_cost = disposal_cost_var.get().strip()
+        num_days = num_days_var.get().strip()
+        num_workers = num_workers_var.get().strip()
+
+        if not description_value:
+            messagebox.showerror("Missing Description", "Please select a project description.")
+            return
+
+        try:
+            sqft_value = int(sqft_var.get().strip())
+            lower_limit_value = int(lower_limit_var.get().strip())
+            upper_limit_value = int(upper_limit_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Please enter valid numbers for total SqFt and limits.")
+            return
+
+        try:
+            equipment_cost_value = float(equipment_cost)
+            disposal_cost_value = float(disposal_cost)
+            num_days_value = int(num_days)
+            num_workers_value = int(num_workers)
+        except ValueError:
+            messagebox.showerror(
+                "Invalid Input",
+                "Please enter valid numbers for equipment/disposal cost, days, and workers.",
+            )
+            return
+
+        if sqft_value < 0 or num_days_value <= 0 or num_workers_value <= 0:
+            messagebox.showerror(
+                "Invalid Input",
+                "SqFt, number of days, and number of workers must be greater than zero.",
+            )
+            return
+
+        if equipment_cost_value < 0 or disposal_cost_value < 0:
+            messagebox.showerror(
+                "Invalid Input",
+                "Equipment and disposal costs must be zero or greater.",
+            )
+            return
+
+        if upper_limit_value < lower_limit_value:
+            messagebox.showerror("Invalid Range", "Upper limit must be greater than or equal to lower limit.")
+            return
+
+        if description_value in ["Building Demo", "House Demo"] and not structure_value:
+            messagebox.showerror("Missing Structure Type", "Please select a structure type.")
+            return
+
+        if not ensure_model_data_loaded():
+            return
+
+        model_df = model_cache["df"]
+        models = model_cache["models"]
+
+        if description_value in ["Building Demo", "House Demo"]:
+            projects = model_df.loc[
+                (model_df["Description"] == description_value)
+                & (model_df["Structure Type"] == structure_value)
+                & (model_df["SqFt"].between(lower_limit_value, upper_limit_value))
+            ]
+        else:
+            projects = model_df.loc[
+                (model_df["Description"] == description_value)
+                & (model_df["SqFt"].between(lower_limit_value, upper_limit_value))
+            ]
+
+        if projects.empty:
+            messagebox.showwarning("No Results", "No historical projects matched this estimating range.")
+            return
+
+        detailed_project_report = build_project_report(
+            description_value,
+            structure_value,
+            sqft_value,
+            equipment_cost_value,
+            disposal_cost_value,
+            num_days_value,
+            num_workers_value,
+        )
+        if not detailed_project_report:
+            messagebox.showerror("Invalid Input", "Unable to generate the detailed project report.")
+            return
+
+        average_job_cost = round(projects["Job Cost"].mean(), 2)
+        average_bid_price = round(projects["Bid Price"].mean(), 2)
+        avg_profit_percent = _safe_profit_percent(average_bid_price, average_job_cost)
+
+        ridge_bid, ridge_cost, rf_bid, rf_cost = estimate_costs(
+            models,
+            sqft_value,
+            description_value,
+            structure_value,
+        )
+
+        ridge_profit_percent = _safe_profit_percent(ridge_bid, ridge_cost)
+        rf_profit_percent = _safe_profit_percent(rf_bid, rf_cost)
+
+        recent_history = projects.sort_values("Awarded Date").tail(5)
+        history_lines = []
+        for job_number, row in recent_history.iterrows():
+            awarded_date = row["Awarded Date"]
+            awarded_text = "N/A" if pd.isna(awarded_date) else awarded_date.strftime("%Y-%m-%d")
+            history_lines.append(
+                f"Job {job_number} | Date: {awarded_text} | SqFt: {int(row['SqFt']):,} | "
+                f"Bid: ${row['Bid Price']:,.2f} | Cost: ${row['Job Cost']:,.2f} | "
+                f"P/L: {row['Profit and Loss %']:.2f}%"
+            )
+
+        estimating_text = (
+            f"{detailed_project_report}\n"
+            "Historical Data Summary:\n"
+            f"Historical SqFt Range: {lower_limit_value:,} to {upper_limit_value:,}\n"
+            f"Matching Project Count: {len(projects)}\n"
+            f"Average Bid Price: ${average_bid_price:,.2f}\n"
+            f"Average Job Cost: ${average_job_cost:,.2f}\n"
+            f"Average % Profit: {avg_profit_percent:.2f}%\n\n"
+            "Machine Learning Estimates:\n"
+            f"Ridge Bid Price: ${ridge_bid:,.2f}\n"
+            f"Ridge Job Cost: ${ridge_cost:,.2f}\n"
+            f"Ridge % Profit: {ridge_profit_percent:.2f}%\n\n"
+            f"Random Forest Bid Price: ${rf_bid:,.2f}\n"
+            f"Random Forest Job Cost: ${rf_cost:,.2f}\n"
+            f"Random Forest % Profit: {rf_profit_percent:.2f}%\n\n"
+            "Most Recent Matching Historical Projects:\n"
+            + "\n".join(history_lines)
+        )
+
+        collected_data["Estimating Details"] = {
+            "starting_text": "Project-Specific Estimating Details:",
+            "user_input": estimating_text,
+        }
+
+        estimate_status_var.set(
+            "Estimate saved to proposal data. Click Next to continue or run again to update values."
+        )
+
+        ################### Matplotlib Charts Below ######################
+        # Updated bar chart to include 'Profit and Loss %' row.
+        # most_recent = projects.tail()
+        most_recent = projects.tail().copy() # Use .copy() to avoid SettingWithCopyWarning
+
+        # Plot only the numeric bar-series columns.
+        chart_columns = most_recent[['SqFt', 'Bid Price', 'Job Cost']]
+
+        chart = chart_columns.plot(kind='bar')
+
+        # Ensure 'Bid Price' and 'Job Cost' are cast to float before formatting.
+        most_recent['Bid Price'] = most_recent['Bid Price'].astype(float)
+        most_recent['Job Cost'] = most_recent['Job Cost'].astype(float)
+
+        # Format 'Bid Price' and 'Job Cost' to be rounded to the nearest two digits
+        most_recent['Formatted Bid Price'] = most_recent['Bid Price'].apply(lambda x: f"{x:,.2f}")
+        most_recent['Formatted Job Cost'] = most_recent['Job Cost'].apply(lambda x: f"{x:,.2f}")
+
+        # Add the table with all columns including 'Profit and Loss %'
+        table_data = most_recent[['SqFt', 'Bid Price', 'Job Cost',  
+                                    'Profit and Loss %']].T
+        table_data.columns = most_recent.index
+
+        table = plt.table(cellText=table_data.values, rowLabels=table_data.index, 
+                            colLabels=table_data.columns, loc='bottom', 
+                            cellLoc='center', rowLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1) # Adjust the scaling to match the chart size
+
+        chart.set_title(f"Most Recent {description_value} Projects Around {sqft_value} sqft", 
+                        fontsize=16)
+        chart.set_xlabel("Job Numbers", fontsize=14)
+        chart.set_ylabel("Amount", fontsize=14)
+        chart.legend(loc='upper right')
+        chart.grid(visible=True, axis="y")
+
+        display_text = f"The average bid price is: ${average_bid_price:,.2f} \n"
+        display_text += f"The average job cost is: ${average_job_cost:,.2f}"
+        plt.text(.01, .97, display_text, ha='left', va='top', 
+                    transform=chart.transAxes)
+
+        chart.axes.get_xaxis().set_visible(False)
+        # Adjust the layout to fit the table and chart
+        plt.subplots_adjust(left=0.2, bottom=0.2) 
+
+        # Add tooltips to display label and value.
+        cursor = mplcursors.cursor(chart, hover=True)
+        cursor.connect("add", lambda sel: sel.annotation.set_text(f'{sel.artist.get_label()}: {sel.target[1]:,.2f}'))
+
+        # Set the window title
+        plt.gcf().canvas.manager.set_window_title(f"{sqft_value}_{description_value}_{todays_date}")
+
+        plt.show()
+        
+        # New line chart for trend over time
+        projects.loc[:, 'Awarded Date'] = pd.to_datetime(projects['Awarded Date'])
+        projects = projects.sort_values('Awarded Date')
+
+        plt.figure()
+        line1, = plt.plot(projects['Awarded Date'], projects['Bid Price'], 
+                            label='Bid Price', marker='o')
+        line2, = plt.plot(projects['Awarded Date'], projects['Job Cost'], 
+                            label='Job Cost', marker='o')
+        plt.title(f"Trend of {sqft_value} sqft {description_value} Projects Over Time")
+        plt.xlabel("Awarded Date")
+        plt.xticks(rotation=45)
+        plt.ylabel("Amount")
+        plt.legend()
+        plt.grid(True)
+
+        # Add tooltips to display label and value.
+        cursor = mplcursors.cursor([line1, line2], hover=True)
+        cursor.connect("add", lambda sel: sel.annotation.set_text(f'{sel.artist.get_label()}: {sel.target[1]:,.2f}'))
+
+        plt.tight_layout()
+        plt.gcf().canvas.manager.set_window_title(f"Trend of {sqft_value}_{description_value}_{todays_date}")
+        plt.show()
+
+
+    def save_estimating_page():
+        if "Estimating Details" not in collected_data:
+            collected_data["Estimating Details"] = {
+                "starting_text": "Project-Specific Estimating Details:",
+                "user_input": (
+                    "Estimating inputs were not run before moving to the next section.\n"
+                    f"Description: {description_var.get().strip() or 'Not provided'}\n"
+                    f"Structure Type: {structure_var.get().strip() or 'Not provided'}\n"
+                    f"Total SqFt: {sqft_var.get().strip() or 'Not provided'}\n"
+                    f"Lower Limit: {lower_limit_var.get().strip() or 'Not provided'}\n"
+                    f"Upper Limit: {upper_limit_var.get().strip() or 'Not provided'}\n"
+                    f"Equipment Budget: {equipment_cost_var.get().strip() or 'Not provided'}\n"
+                    f"Disposal Budget: {disposal_cost_var.get().strip() or 'Not provided'}\n"
+                    f"Number of Days: {num_days_var.get().strip() or 'Not provided'}\n"
+                    f"Number of Workers: {num_workers_var.get().strip() or 'Not provided'}"
+                ),
+            }
+        show_page("Project-Specific Details")
+
+    tk.Label(page, text="Description:",
+              font=(FONT, FONT_SIZE)).grid(row=2, column=0, sticky="e", padx=10, pady=5)
+    description_combo = ttk.Combobox(
+        page,
+        textvariable=description_var,
+        state="readonly",
+        values=["Interior Demolition", "Building Demo", "House Demo"],
+        width=36,
+    )
+    description_combo.grid(row=2, column=1, sticky="w", padx=10, pady=5)
+    description_combo.bind("<<ComboboxSelected>>", on_description_change)
+
+    tk.Label(page, text="Structure Type:", 
+             font=(FONT, FONT_SIZE)).grid(row=3, column=0, sticky="e", padx=10, pady=5)
+    ttk.Combobox(
+        page,
+        textvariable=structure_var,
+        state="readonly",
+        values=["Concrete", "Wood", "Metal", "Brick or Block", "Other"],
+        width=36,
+    ).grid(row=3, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Total SqFt:", 
+             font=(FONT, FONT_SIZE)).grid(row=4, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=sqft_var, 
+             width=40).grid(row=4, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Lower SqFt Limit:", 
+             font=(FONT, FONT_SIZE)).grid(row=5, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=lower_limit_var, 
+             width=40).grid(row=5, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Upper SqFt Limit:", 
+             font=(FONT, FONT_SIZE)).grid(row=6, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=upper_limit_var, 
+             width=40).grid(row=6, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Total Equipment Budget:", 
+             font=(FONT, FONT_SIZE)).grid(row=7, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=equipment_cost_var, 
+             width=40).grid(row=7, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Total Disposal Budget:", 
+             font=(FONT, FONT_SIZE)).grid(row=8, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=disposal_cost_var, 
+             width=40).grid(row=8, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Total Number of Days:", 
+             font=(FONT, FONT_SIZE)).grid(row=9, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=num_days_var, 
+             width=40).grid(row=9, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Label(page, text="Total Number of Workers:", 
+             font=(FONT, FONT_SIZE)).grid(row=10, column=0, sticky="e", padx=10, pady=5)
+    tk.Entry(page, textvariable=num_workers_var, 
+             width=40).grid(row=10, column=1, sticky="w", padx=10, pady=5)
+
+    tk.Button(page, text="Run Estimate", 
+              command=run_estimate_and_store).grid(row=11, column=1, padx=10, pady=10, sticky="w")
+
+    tk.Label(
+        page,
+        textvariable=estimate_status_var,
+        font=(FONT, FONT_SIZE),
+        fg="darkgreen",
+        wraplength=700,
+        justify="left",
+    ).grid(row=12, column=0, columnspan=2, padx=10, pady=10, sticky="w")
+
+    tk.Button(page, text="Back", 
+              command=lambda: show_page("Project Overview")).grid(row=13, column=0, pady=20, sticky="w")
+    tk.Button(page, text="Next", 
+              command=save_estimating_page).grid(row=13, column=1, pady=20, sticky="e")
 
 
 # Page 2: Project-Specific Details
@@ -411,6 +1064,7 @@ def create_project_specific_details_page():
     tk.Button(page, text="Next", 
               command=save_project_details).grid(row=2, column=1, pady=20, sticky="e")
 
+
 # Page 3: Methodology and Approach
 def create_methodology_and_approach_page():
     """
@@ -445,7 +1099,7 @@ def create_methodology_and_approach_page():
         "Address any special considerations:\n\n\n"
         "Demolition means/methods (mechanical, hand demo, top-down approach):\n\n\n"
         "Worker safety, fall protection, dust control, and stability monitoring:\n\n\n"
-        "Clarify structural sequencing or shoring responsibilities (Company or others?):\n\n\n"
+        "Clarify structural sequencing or shoring responsibilities (Tinys or others?):\n\n\n"
     )
     methodology_text.insert("1.0", starting_text)  # Insert text at the beginning of the text box
 
@@ -1095,6 +1749,7 @@ def create_final_page():
 
 # Create all pages
 create_project_overview_page()
+create_project_estimating_page()
 create_project_specific_details_page()
 create_methodology_and_approach_page()
 create_order_of_operations_page()

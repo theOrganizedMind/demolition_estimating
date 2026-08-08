@@ -1,5 +1,5 @@
 from tkinter import *
-from tkinter import messagebox, scrolledtext, font
+from tkinter import messagebox
 from idlelib.tooltip import Hovertip
 
 
@@ -9,7 +9,6 @@ class BuildingDemo:
     costs associated with it.
 
     Attributes:
-        description (str): A brief description of the project.
         total_sqft (int): The total square footage of the building.
         total_equipment_cost (int): The estimated cost of equipment in dollars.
         total_disposal_cost (int): The estimated cost of disposal in dollars.
@@ -61,10 +60,11 @@ class BuildingDemo:
     PROFIT = 1.35
     OVERHEAD_PERCENTAGE = 0.1
 
-    def __init__(self, description, total_sqft: int = 0, 
+    def __init__(self, description, structure_type, total_sqft: int = 0, 
                  total_equipment_cost: int = 0, total_disposal_cost: int = 0, 
                  num_days: int = 0, num_guys: int = 0):
         self.description = description
+        self.structure_type = structure_type
         self.total_sqft = total_sqft
         self.total_equipment_cost = total_equipment_cost      
         self.total_disposal_cost = total_disposal_cost
@@ -75,12 +75,11 @@ class BuildingDemo:
 
     def calculate_cost_per_sqft(self) -> float:
         """
-        Calculates and prints the estimated cost per square foot.
+        Calculates the estimated cost per square foot.
         """
         if self.bid_price == 0.0:
             self.calculate_bid_price()
         price_per_sqft = self.bid_price / self.total_sqft
-        print(f"The estimated bid price per SqFt is: ${price_per_sqft:.2f}")
         return price_per_sqft
 
     def calculate_man_hours(self) -> float:
@@ -107,19 +106,19 @@ class BuildingDemo:
 
     def calculate_job_cost(self) -> float:
         """
-        Calculates the total job cost for the project.
+        Calculates and prints the total job cost for the project.
         """
         job_cost = self.calculate_man_hours() + self.calculate_equipment_cost() \
                         + self.calculate_disposal_cost()
+        # print(f"The estimated job cost is: ${job_cost:,.2f}")
         return job_cost
 
     def calculate_bid_price(self) -> float:
         """
-        Calculates and prints the bid price for the project.
+        Calculates the bid price for the project.
         """
         total_cost = self.calculate_total_cost()
         self.bid_price = total_cost * self.PROFIT
-        print(f"The estimated bid price is: ${self.bid_price:,.2f}")
         return self.bid_price
     
     def calculate_overhead_cost(self) -> float:
@@ -136,17 +135,19 @@ class BuildingDemo:
 
     def generate_detailed_report(self) -> str:
         """
-        Generates a detailed report of the project and displays it in a Tkinter window.
+        Generates a detailed report of the project.
         """
         report = (
             f"{self.description} Project Report\n"
             f"-----------------------------------\n"
+            f"Description: {self.description}\n"
+            f"Structure Type: {self.structure_type}\n"
             f"Total SqFt: {self.total_sqft}\n"
             f"Number of Days: {self.num_days}\n"
             f"Number of Workers: {self.num_guys}\n"
             f"Total Man-Hours Cost: ${self.calculate_man_hours():,.2f}\n"
-            f"Total Equipment Cost: ${self.calculate_equipment_cost():,.2f}\n"
-            f"Total Disposal Cost: ${self.calculate_disposal_cost():,.2f}\n"
+            f"Total Equipment Budget: ${self.calculate_equipment_cost():,.2f}\n"
+            f"Total Disposal Budget: ${self.calculate_disposal_cost():,.2f}\n"
             f"Total Job Cost: ${self.calculate_job_cost():,.2f}\n"
             f"Overhead Cost: ${self.calculate_overhead_cost():,.2f}\n"
             f"Bid Price: ${self.calculate_bid_price():,.2f}\n"
@@ -154,23 +155,7 @@ class BuildingDemo:
             f"Profit Margin: {self.calculate_profit_margin():.2f}%\n"
         )
 
-        # Create a new Tkinter window to display the report
-        info = Tk()
-        info.title("Detailed Report")
-
-        # Customize font and colors
-        custom_font = font.Font(family="Times New Roman", size=12)
-        text_area = scrolledtext.ScrolledText(info, wrap=WORD, width=60, height=20,
-                                            font=custom_font, fg="green")
-        text_area.pack(padx=10, pady=10)
-
-        # Insert the report into the text area
-        text_area.insert(END, report)
-
-        # Set the protocol for window closing
-        info.protocol("WM_DELETE_WINDOW", lambda: self.on_closing_estimates(info))
-
-        info.mainloop()
+        return report
 
     def validate_input_data(self) -> bool:
         """
@@ -216,7 +201,7 @@ class BuildingDemo:
         Creates:
             - A new Tkinter TopLevel window for entering project details.
             - Entry fields for total square footage, total equipment cost, 
-              total disposal cost, number of days, and number of workers.
+            total disposal cost, number of days, and number of workers.
             - An estimate button to calculate and display the estimates.
 
         Calls:
@@ -293,7 +278,7 @@ class BuildingDemo:
                 num_guys = int(num_guys_input.get())
 
                 if total_sqft > 0 and equipment_cost >= 0 and disposal_cost >= 0 and \
-                   num_days > 0 and num_guys > 0:
+                    num_days > 0 and num_guys > 0:
                     self.total_sqft = total_sqft
                     self.total_equipment_cost = equipment_cost
                     self.total_disposal_cost = disposal_cost
@@ -310,4 +295,3 @@ class BuildingDemo:
         estimate_button = Button(demo_project_window, text="Estimate",
                                     command=get_user_input)
         estimate_button.grid(column=0, row=5, columnspan=2, pady=10)
-    

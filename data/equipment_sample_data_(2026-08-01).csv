@@ -1,0 +1,6 @@
+equipment_id,equipment_name,project_type,purchase_price,day_rate,week_rate,month_rate
+1,19 Scissor Lift,Interior Demolition,14500.00,150.00,600.00,1800.00
+2,350 Excavator,Building Demo,84500.00,1450.00,3500.00,5200.00
+3,Mini Ex,Other,22700.00,725.00,1300.00,4800.00
+4,Skid Steer,Other,NULL,1250.00,3800.00,5500.00
+5,Floor Tile Machine,Interior Demolition,NULL,1800.00,3200.00,5800.00

@@ -1,47 +1,176 @@
 import statistics
+import logging
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import mplcursors
 import pandas as pd
 import tkinter as tk
 from tkinter import messagebox, ttk
-from sklearn.model_selection import train_test_split, TimeSeriesSplit
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import numpy as np
 from prophet import Prophet
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots  
+from plotly.subplots import make_subplots
+from datetime import datetime
 
-from expenses import monthly_expenses, quickbooks_monthly_expenses
-from payroll import employees, monthly_payroll
 from revenue import revenue
-from disposal import monthly_disposal_cost
-from trucks_and_equipment import trucks, equipment
+from postgresql import get_db_connection
+
+
+logger = logging.getLogger(__name__)
+
+# ========================================================================== #
+# ================================== INFO ================================== #
+# ========================================================================== #
+# Description of the Program:
+# ========================================================================== #
+# ================================== TODO ================================== #
+# ========================================================================== #
+# TODO: 
+# Add PostgreSQL variables to .env before running program. 
+# See postgresql.py for required parameters.
+# ========================================================================== #
 
 NUM_MONTHS = 12
 WORK_DAYS_IN_MONTH = 20
 DAILY_WORK_HOURS = 10
 PROFIT_MARGIN = 1.35
-NUM_EMPLOYEES = len(employees)
+NUM_EMPLOYEES = 112
 
-# ========================================================================== #
-# ================================ Payroll ================================= #
-# ========================================================================== #
-total_payroll_by_employee = round(sum(employees.values()))
-total_monthly_payroll_by_employee = round(total_payroll_by_employee / NUM_MONTHS, 2)
-daily_payroll = total_monthly_payroll_by_employee  / WORK_DAYS_IN_MONTH
+# =========================================================================== #
+# ======================== Get Data from PostgreSQL ========================= #
+# =========================================================================== #
 
-# ========================================================================== #
-# ================================ Expenses ================================ #
-# ========================================================================== #
-total_monthly_expenses = round(sum(monthly_expenses.values()), 2)
-total_yearly_expenses = total_monthly_expenses * NUM_MONTHS
-total_daily_expenses = total_monthly_expenses / WORK_DAYS_IN_MONTH
-daily_operating_cost = round(daily_payroll + total_daily_expenses, 2)
-monthly_operating_cost = round(daily_operating_cost * WORK_DAYS_IN_MONTH, 2)
-daily_operating_cost_per_employee = round(daily_operating_cost / NUM_EMPLOYEES, 2)
-hourly_rate = round(daily_operating_cost_per_employee / DAILY_WORK_HOURS * PROFIT_MARGIN, 2)
+def fetch_monthly_numbers_from_postgresql(start_date, end_date):
+    """Fetch monthly financial values between start/end month, inclusive."""
+    start_month = datetime.strptime(start_date, '%Y-%m').strftime('%Y-%m')
+    end_month = datetime.strptime(end_date, '%Y-%m').strftime('%Y-%m')
+
+    query = """
+        SELECT
+            year_month,
+            disposalcost AS monthly_disposal_cost,
+            expense AS quickbooks_monthly_expenses,
+            sales AS monthly_sales,
+            payroll AS monthly_payroll
+        FROM monthly_numbers
+        WHERE year_month >= %(start_month)s
+          AND year_month <= %(end_month)s
+        ORDER BY year_month;
+    """
+
+    with get_db_connection() as conn:
+        df = pd.read_sql_query(
+            query,
+            conn,
+            params={"start_month": start_month, "end_month": end_month},
+        )
+
+    if df.empty:
+        raise ValueError(
+            "No monthly_numbers records found for the selected date range."
+        )
+
+    df['year_month'] = df['year_month'].astype(str)
+    for col in [
+        'monthly_disposal_cost',
+        'quickbooks_monthly_expenses',
+        'monthly_sales',
+        'monthly_payroll',
+    ]:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+    return df
+
+
+def get_monthly_numbers_dicts_by_date_range():
+    """Return monthly financial series dictionaries from PostgreSQL for UI dates."""
+    start_date, end_date = get_required_date_range()
+    df = fetch_monthly_numbers_from_postgresql(start_date, end_date)
+    return {
+        'monthly_disposal_cost': dict(zip(df['year_month'], df['monthly_disposal_cost'])),
+        'quickbooks_monthly_expenses': dict(zip(df['year_month'], df['quickbooks_monthly_expenses'])),
+        'monthly_sales': dict(zip(df['year_month'], df['monthly_sales'])),
+        'monthly_payroll': dict(zip(df['year_month'], df['monthly_payroll'])),
+    }
+
+
+def get_operating_cost_metrics(monthly_data):
+    """Build daily/monthly/yearly operating-cost metrics from DB monthly data."""
+    payroll_values = list(monthly_data['monthly_payroll'].values())
+    expense_values = list(monthly_data['quickbooks_monthly_expenses'].values())
+
+    monthly_payroll_avg = statistics.mean(payroll_values)
+    monthly_expenses_avg = statistics.mean(expense_values)
+    yearly_payroll_total = sum(payroll_values)
+    yearly_expenses_total = sum(expense_values)
+
+    daily_payroll = monthly_payroll_avg / WORK_DAYS_IN_MONTH
+    daily_expenses = monthly_expenses_avg / WORK_DAYS_IN_MONTH
+    daily_operating_cost = daily_payroll + daily_expenses
+
+    if NUM_EMPLOYEES > 0:
+        daily_operating_cost_per_employee = daily_operating_cost / NUM_EMPLOYEES
+        hourly_rate = round(
+            daily_operating_cost_per_employee / DAILY_WORK_HOURS * PROFIT_MARGIN,
+            2,
+        )
+    else:
+        daily_operating_cost_per_employee = 0.0
+        hourly_rate = 0.0
+
+    return {
+        'daily_payroll': round(daily_payroll, 2),
+        'daily_operating_cost': round(daily_operating_cost, 2),
+        'daily_operating_cost_per_employee': round(daily_operating_cost_per_employee, 2),
+        'hourly_rate': hourly_rate,
+        'monthly_payroll_avg': round(monthly_payroll_avg, 2),
+        'monthly_expenses_avg': round(monthly_expenses_avg, 2),
+        'monthly_operating_cost_avg': round(monthly_payroll_avg + monthly_expenses_avg, 2),
+        'yearly_payroll_total': round(yearly_payroll_total, 2),
+        'yearly_expenses_total': round(yearly_expenses_total, 2),
+        'yearly_operating_cost_total': round(yearly_payroll_total + yearly_expenses_total, 2),
+    }
+
+def get_required_date_range():
+    """Read and validate start/end dates from the UI and return both values."""
+    start_date = start_date_entry.get().strip()
+    end_date = end_date_entry.get().strip()
+
+    if not start_date or not end_date:
+        raise ValueError("Please enter both start and end dates in YYYY-MM format.")
+
+    datetime.strptime(start_date, '%Y-%m')
+    datetime.strptime(end_date, '%Y-%m')
+    return start_date, end_date
+
+
+def get_number_of_months_from_date_range():
+    """Return inclusive month count for the validated UI start/end date range."""
+    start_date, end_date = get_required_date_range()
+    start = datetime.strptime(start_date, '%Y-%m')
+    end = datetime.strptime(end_date, '%Y-%m')
+
+    if end < start:
+        raise ValueError("End date must be on or after the start date.")
+
+    return ((end.year - start.year) * 12) + (end.month - start.month) + 1
+
+def fetch_equipment_values():
+    """Fetch equipment name and purchase price."""
+    equipment_values = {}
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT equipment_name, purchase_price FROM equipment;"
+            )
+            rows = cur.fetchall()
+
+    for row in rows:
+        if len(row) < 2 or row[0] is None or row[1] is None:
+            continue
+        equipment_values[str(row[0])] = float(row[1])
+
+    return equipment_values
 
 # ========================================================================== #
 # ======================= Machine Learning with Matplot ==================== #
@@ -161,8 +290,8 @@ def predict_and_plot_with_plotly(data_dicts, column_names, future_months=3):
 
     # Update layout
     fig.update_layout(height=1000, width=2000, 
-                      title_text="Predictions for Monthly Quickbooks Expenses, "
-                      "Monthly Payroll and Monthly Disposal Cost",
+                      title_text="Predictions for Monthly Expenses, "
+                      "Payroll, Sales and Disposal Cost",
                       title_x=0.5,)
     fig.update_xaxes(title_text="Month", tickformat='%Y-%m')
     fig.update_yaxes(title_text="Values")
@@ -199,50 +328,55 @@ def calculate_financials():
     """
     try:
         option = options.get()
+        monthly_data_options = {"Daily", "Monthly", "Yearly", "Disposal", "Quickbooks", "Sales"}
+        monthly_data = None
+        operating_cost_metrics = None
+
+        if option in monthly_data_options:
+            monthly_data = get_monthly_numbers_dicts_by_date_range()
+            operating_cost_metrics = get_operating_cost_metrics(monthly_data)
+
         if option == "Daily":
             financials = {
-                "Daily Operating Cost": daily_operating_cost,
-                "Daily Operating Cost per Employee": daily_operating_cost_per_employee,
-                "Total daily payroll": daily_payroll,
-                "Rate per Hour": hourly_rate
+                "Daily Operating Cost": operating_cost_metrics['daily_operating_cost'],
+                "Daily Operating Cost per Employee": operating_cost_metrics['daily_operating_cost_per_employee'],
+                "Total daily payroll": operating_cost_metrics['daily_payroll'],
+                "Rate per Hour": operating_cost_metrics['hourly_rate'],
             }
             display_financials("Daily", financials)
 
         elif option == "Monthly":
             financials = {
-                "Total monthly payroll": total_monthly_payroll_by_employee,
-                "Total monthly expenses": total_monthly_expenses,
-                "Total monthly operating cost": monthly_operating_cost,
+                "Average monthly payroll": operating_cost_metrics['monthly_payroll_avg'],
+                "Average monthly expenses": operating_cost_metrics['monthly_expenses_avg'],
+                "Average monthly operating cost": operating_cost_metrics['monthly_operating_cost_avg'],
             }
             display_financials("Monthly", financials)
 
         elif option == "Yearly":
             financials = {
-                "Total yearly payroll": total_payroll_by_employee,
-                "Total yearly expenses": total_yearly_expenses,
-                "Total yearly operating cost": total_yearly_expenses + total_payroll_by_employee,}
+                "Total payroll for date range": operating_cost_metrics['yearly_payroll_total'],
+                "Total expenses for date range": operating_cost_metrics['yearly_expenses_total'],
+                "Total operating cost for date range": operating_cost_metrics['yearly_operating_cost_total'],
+            }
             display_financials("Yearly", financials)
 
-        elif option == "Trucks":
-            print("\n")
-            print("Trucks".center(20, "-"))
-            for t, v in trucks.items():
-                print(f"{t}: ${v:,.2f}")
-            total_trucks = round(sum(trucks.values()))
-            avg_truck_cost = statistics.mean(trucks.values())
-            financials = {
-                "Total cost of all trucks": total_trucks,
-                "Average truck cost": avg_truck_cost
-            }
-            display_financials("Trucks", financials)
-
         elif option == "Equipment":
+            equipment_values = fetch_equipment_values()
+
+            if not equipment_values:
+                messagebox.showwarning(
+                    "No Results",
+                    "No equipment data was returned from the equipment table.",
+                )
+                return
+            
             print("\n")
             print("Equipment".center(20, "-"))
-            for e, v in equipment.items():
+            for e, v in equipment_values.items():
                 print(f"{e}: ${v:,.2f}")
-            total_equipment = round(sum(equipment.values()))
-            avg_equipment_cost = statistics.mean(equipment.values())
+            total_equipment = round(sum(equipment_values.values()))
+            avg_equipment_cost = statistics.mean(equipment_values.values())
             financials = {
                 "Total cost of all equipment": total_equipment,
                 "Average equipment cost": avg_equipment_cost
@@ -250,6 +384,7 @@ def calculate_financials():
             display_financials("Equipment", financials)
 
         elif option == "Disposal":
+            monthly_disposal_cost = monthly_data['monthly_disposal_cost']
             total_disposal_cost = sum(monthly_disposal_cost.values())
             avg_disposal_cost = round(statistics.mean(monthly_disposal_cost.values())) 
             avg_daily_disposal_cost = round(avg_disposal_cost / WORK_DAYS_IN_MONTH)  
@@ -263,7 +398,7 @@ def calculate_financials():
         elif option == "Revenue":
             total_revenue = sum([year_data["revenue"] for year_data in revenue.values()])
             total_net_profit = sum([year_data["net profit"] for year_data in revenue.values()])
-            num_employees = len(employees.keys())
+            num_employees = NUM_EMPLOYEES
             num_years = len(revenue)
             avg_revenue = round(total_revenue / num_years, 2)
             avg_net_profit = round(total_net_profit / num_years, 2)
@@ -282,6 +417,7 @@ def calculate_financials():
             display_financials("Revenue", financials)
 
         elif option == "Quickbooks":
+            quickbooks_monthly_expenses = monthly_data['quickbooks_monthly_expenses']
             total_qb_monthly_expenses = round(sum(quickbooks_monthly_expenses.values()), 2)
             avg_qb_monthly_expenses = round(statistics.mean(quickbooks_monthly_expenses.values()), 2)
             financials = {
@@ -290,11 +426,25 @@ def calculate_financials():
             }
             display_financials("Quickbooks", financials)
 
+        elif option == "Sales":
+            monthly_sales = monthly_data['monthly_sales']
+            total_monthly_sales = round(sum(monthly_sales.values()), 2)
+            avg_monthly_sales = round(statistics.mean(monthly_sales.values()), 2)
+            financials = {
+                "Total monthly sales": total_monthly_sales,
+                "Average monthly sales": avg_monthly_sales,
+            }
+            display_financials("Sales", financials)
+
         else:
             messagebox.showwarning("No Results", "Please choose a valid option.")
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    except Exception:
+        logger.exception("Failed to calculate financial metrics")
+        messagebox.showerror(
+            "Financials Error",
+            "Unable to calculate financial results right now. Please verify inputs and database connectivity.",
+        )
 
 # ========================================================================== #
 # ============================== Display Chart ============================= #
@@ -318,7 +468,7 @@ def plot_pie_chart(title, labels, sizes):
     plt.show()
 
 
-def plot_bar_chart(title, labels, values):
+def plot_bar_chart(title, labels, values, number_of_months=13):
     """
     Helper function to plot a bar chart.
     
@@ -330,9 +480,9 @@ def plot_bar_chart(title, labels, values):
     Returns:
     None
     """
-    # Show only the past 13 months
-    labels = labels[-13:]
-    values = values[-13:]
+    # Show only the past number of months
+    labels = labels[-number_of_months:]
+    values = values[-number_of_months:]
 
     fig, ax = plt.subplots(figsize=(10, 5))
     bars = ax.bar(labels, values)
@@ -449,31 +599,57 @@ def display_chart():
     """
     try:
         option = options.get()
+        monthly_data_options = {
+            'Monthly', 'Yearly', 'Disposal', 'Quickbooks', 'Sales',
+            'Predictions(Matplot)', 'Predictions(Plotly)'
+        }
+        monthly_data = None
+        operating_cost_metrics = None
+
+        if option in monthly_data_options:
+            monthly_data = get_monthly_numbers_dicts_by_date_range()
+            operating_cost_metrics = get_operating_cost_metrics(monthly_data)
 
         if option == 'Monthly':
             labels = ['Payroll', 'Expenses']
-            sizes = [total_monthly_payroll_by_employee, total_monthly_expenses]
-            plot_pie_chart("Monthly Expenses", labels, sizes)
+            sizes = [
+                operating_cost_metrics['monthly_payroll_avg'],
+                operating_cost_metrics['monthly_expenses_avg'],
+            ]
+            plot_pie_chart("TDC Monthly Expenses", labels, sizes)
 
         elif option == 'Yearly':
             labels = ['Payroll', 'Expenses']
-            sizes = [total_payroll_by_employee, total_yearly_expenses]
-            plot_pie_chart("Yearly Expenses", labels, sizes)
-
-        elif option == 'Trucks':
-            labels = list(trucks.keys())
-            values = list(trucks.values())
-            plot_pie_chart("Truck Values", labels, values)
+            sizes = [
+                operating_cost_metrics['yearly_payroll_total'],
+                operating_cost_metrics['yearly_expenses_total'],
+            ]
+            plot_pie_chart("TDC Yearly Expenses", labels, sizes)
 
         elif option == "Equipment":
-            labels = list(equipment.keys())
-            values = list(equipment.values())
+            equipment_values = fetch_equipment_values()
+
+            if not equipment_values:
+                messagebox.showwarning(
+                    "No Results",
+                    "No truck data was returned from the trucks table.",
+                )
+                return
+
+            labels = list(equipment_values.keys())
+            values = list(equipment_values.values())
             plot_pie_chart("Equipment Values", labels, values)
 
         elif option == 'Disposal':
+            start_date, end_date = get_required_date_range()
+
+            monthly_disposal_cost = monthly_data['monthly_disposal_cost']
             labels = list(monthly_disposal_cost.keys())
             values = list(monthly_disposal_cost.values())
-            plot_bar_chart("Disposal Costs for the Past 13 Months", labels, values)
+            plot_bar_chart(f"Disposal Costs from {start_date} to {end_date}", 
+                           labels, 
+                           values,
+                           len(monthly_disposal_cost))
 
         elif option == 'Revenue':
             labels = list(revenue.keys())
@@ -484,11 +660,32 @@ def display_chart():
                             "Net Profit")
 
         elif option == 'Quickbooks':
+            start_date, end_date = get_required_date_range()
+
+            quickbooks_monthly_expenses = monthly_data['quickbooks_monthly_expenses']
             labels = list(quickbooks_monthly_expenses.keys())
             values = list(quickbooks_monthly_expenses.values())
-            plot_bar_chart("Quickbooks Expenses for the Past 13 Months", labels, values)
+            plot_bar_chart(f"Quickbooks Expenses from {start_date} to {end_date}", 
+                           labels, 
+                           values,
+                           len(quickbooks_monthly_expenses))
+
+        elif option == 'Sales':
+            start_date, end_date = get_required_date_range()
+
+            monthly_sales = monthly_data['monthly_sales']
+            labels = list(monthly_sales.keys())
+            values = list(monthly_sales.values())
+            plot_bar_chart(f"Monthly Sales from {start_date} to {end_date}", 
+                           labels, 
+                           values,
+                           len(monthly_sales))
 
         elif option == 'Predictions(Matplot)':
+            quickbooks_monthly_expenses = monthly_data['quickbooks_monthly_expenses']
+            monthly_payroll = monthly_data['monthly_payroll']
+            monthly_disposal_cost = monthly_data['monthly_disposal_cost']
+            monthly_sales = monthly_data['monthly_sales']
             # Predict and plot for each dictionary
             predict_and_plot_with_matplot(quickbooks_monthly_expenses, 
                                           'Quickbooks Monthly Expenses')
@@ -496,55 +693,77 @@ def display_chart():
                                           'Monthly Payroll')
             predict_and_plot_with_matplot(monthly_disposal_cost, 
                                           'Monthly Disposal Cost')
+            predict_and_plot_with_matplot(monthly_sales,
+                                          'Monthly Sales')
 
         elif option == 'Predictions(Plotly)':
+            quickbooks_monthly_expenses = monthly_data['quickbooks_monthly_expenses']
+            monthly_payroll = monthly_data['monthly_payroll']
+            monthly_disposal_cost = monthly_data['monthly_disposal_cost']
+            monthly_sales = monthly_data['monthly_sales']
             # Predict and plot for each dictionary
             data_dicts = [quickbooks_monthly_expenses, monthly_payroll, 
-                          monthly_disposal_cost]
+                          monthly_disposal_cost, monthly_sales]
             column_names = ['Quickbooks Monthly Expenses', 'Monthly Payroll', 
-                            'Monthly Disposal Cost']
+                            'Monthly Disposal Cost', 'Monthly Sales']
             predict_and_plot_with_plotly(data_dicts, column_names)
 
         else:
             messagebox.showwarning("No Results", 
                     "Sorry, we do not have a chart for that option to display.")
             
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    except Exception:
+        logger.exception("Failed to generate chart")
+        messagebox.showerror(
+            "Chart Error",
+            "Unable to generate the selected chart right now. Please verify inputs and database connectivity.",
+        )
 
 
 # ========================================================================== #
 # ============================== Tkinter GUI =============================== #
 # ========================================================================== #
-root = tk.Tk()
-root.minsize(width=100, height=100)
-root.title("Company Financials")
-root.config(padx=25, pady=25)
+if __name__=="__main__":
+    root = tk.Tk()
+    root.minsize(width=100, height=100)
+    root.title("Financials")
+    root.config(padx=25, pady=25)
 
-options = ttk.Combobox(root, state="readonly", 
-                           values=[
-                               "Daily", 
-                               "Monthly", 
-                               "Yearly", 
-                               "Trucks", 
-                               "Equipment", 
-                               "Disposal",
-                               "Revenue",
-                               "Quickbooks",
-                               "Predictions(Matplot)",
-                               "Predictions(Plotly)",
-                                ]
-                            )
+    start_date_label = tk.Label(root, text="Start Date YYYY-MM")
+    start_date_label.grid(column=1, row=0, padx=5, pady=5)
+    start_date_entry = tk.Entry(root, width=20)
+    start_date_entry.grid(column=1, row=1, padx=5, pady=10)
 
-options.grid(column=1, row=0, padx=5, pady=5)
-options_label = tk.Label(text="Options")
-options_label.grid(column=2, row=0, padx=5, pady=5)
+    end_date_label = tk.Label(root, text="End Date YYYY-MM")
+    end_date_label.grid(column=2, row=0, padx=5, pady=5)
+    end_date_entry = tk.Entry(root, width=20)
+    end_date_entry.grid(column=2, row=1, padx=5, pady=10)
 
-calculate_button = tk.Button(root, text="Calculate", command=calculate_financials)
-calculate_button.grid(column=1, row=1, padx=5, pady=5)
+    options = ttk.Combobox(root, state="readonly", 
+                            values=[
+                                "Daily", 
+                                "Monthly", 
+                                "Yearly", 
+                                "Trucks", 
+                                "Equipment", 
+                                "Disposal",
+                                "Revenue",
+                                "Quickbooks",
+                                "Sales",
+                                "Predictions(Matplot)",
+                                "Predictions(Plotly)",
+                                    ]
+                                )
 
-chart_button = tk.Button(root, text="Display Chart", command=display_chart)
-chart_button.grid(column=2, row=1, padx=5, pady=5)
+    options.grid(column=1, row=2, padx=5, pady=10)
+    options_label = tk.Label(text="Options")
+    options_label.grid(column=2, row=2, padx=5, pady=10)
+
+    calculate_button = ttk.Button(root, text="Calculate", command=calculate_financials)
+    calculate_button.grid(column=1, row=3, padx=5, pady=5)
+
+    chart_button = ttk.Button(root, text="Display Chart", command=display_chart)
+    chart_button.grid(column=2, row=3, padx=5, pady=5)
 
 
-root.mainloop()
+    root.mainloop()

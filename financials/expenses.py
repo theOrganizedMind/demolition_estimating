@@ -25,14 +25,6 @@ monthly_expenses = {
     "Building Rent": 11077.53,
     }
 
-quickbooks_monthly_expenses = {
-    "2023-01": 24_500.00, "2023-02": 38_200.00, "2023-03": 35_750.00,
-    "2023-04": 42_100.00, "2023-05": 31_900.00, "2023-06": 120_000.00,
-    "2023-07": 80_000.00, "2023-08": 145_000.00, "2023-09": 140_000.00,
-    "2023-10": 110_000.00, "2023-11": 90_000.00, "2023-12": 78_000.00,
-    "2024-01": 100_000.00,
-}
-
 if __name__ == "__main__":
     monthly_expenses = round(sum(monthly_expenses.values()), 2)
     print(f"The total monthly expenses = ${monthly_expenses:,.2f}")

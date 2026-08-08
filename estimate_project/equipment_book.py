@@ -1,13 +1,162 @@
-from tkinter import Tk, ttk, Label, Entry, Button
+from tkinter import Tk, ttk, Label, Entry, Button, scrolledtext, font
 import tkinter as tk
-import json
-import os
+from tkinter import *
+
+from postgresql import get_db_connection
+
+# ========================================================================== #
+# ================================== INFO ================================== #
+# ========================================================================== #
+# 
+# ========================================================================== #
+# ================================== TODO ================================== #
+# ========================================================================== #
+# TODO: 
+# Add PostgreSQL variables to .env before running program. 
+# See postgresql.py for required parameters.
+# ========================================================================== #
+
+def _format_rate(value):
+    """Format numeric rates for display in the UI."""
+    if value is None:
+        return ""
+
+    value = float(value)
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def fetch_equipment_from_postgresql(project_type=None, equipment_name=None):
+    """Fetch equipment rows and normalize them to GUI-friendly dictionaries."""
+    query = """
+        SELECT
+            project_type,
+            equipment_name,
+            day_rate,
+            week_rate,
+            month_rate
+        FROM equipment
+    """
+    params = []
+    conditions = []
+
+    if project_type:
+        conditions.append("project_type ILIKE %s")
+        params.append(f"%{project_type}%")
+    if equipment_name:
+        conditions.append("equipment_name ILIKE %s")
+        params.append(f"%{equipment_name}%")
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    query += " ORDER BY project_type, equipment_name;"
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+    return [
+        {
+            "Project Type": row[0] or "N/A",
+            "Equipment": row[1] or "",
+            "Day": _format_rate(row[2]),
+            "Week": _format_rate(row[3]),
+            "Month": _format_rate(row[4]),
+        }
+        for row in rows
+    ]
+
+
+def insert_equipment_to_postgresql(project_type, 
+                                   equipment_name, 
+                                   day_rate, 
+                                   week_rate, 
+                                   month_rate):
+    """Insert a new equipment row into PostgreSQL."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO equipment (project_type, equipment_name, day_rate, week_rate, month_rate)
+                VALUES (%s, %s, %s, %s, %s);
+                """,
+                (project_type, equipment_name, day_rate, week_rate, month_rate),
+            )
+        conn.commit()
+
+
+def update_equipment_in_postgresql(original_equipment, updated_equipment):
+    """Update an equipment row by matching its original values."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE equipment
+                SET
+                    project_type = %s,
+                    equipment_name = %s,
+                    day_rate = %s,
+                    week_rate = %s,
+                    month_rate = %s
+                WHERE
+                    project_type IS NOT DISTINCT FROM %s
+                    AND equipment_name IS NOT DISTINCT FROM %s
+                    AND day_rate IS NOT DISTINCT FROM %s
+                    AND week_rate IS NOT DISTINCT FROM %s
+                    AND month_rate IS NOT DISTINCT FROM %s;
+                """,
+                (
+                    updated_equipment["Project Type"],
+                    updated_equipment["Equipment"],
+                    updated_equipment["Day"],
+                    updated_equipment["Week"],
+                    updated_equipment["Month"],
+                    original_equipment["Project Type"],
+                    original_equipment["Equipment"],
+                    original_equipment["Day"],
+                    original_equipment["Week"],
+                    original_equipment["Month"],
+                ),
+            )
+            updated_rows = cur.rowcount
+        conn.commit()
+
+    return updated_rows
+
+
+def delete_equipment_from_postgresql(equipment_item):
+    """Delete an equipment row by matching all visible values."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM equipment
+                WHERE
+                    project_type IS NOT DISTINCT FROM %s
+                    AND equipment_name IS NOT DISTINCT FROM %s
+                    AND day_rate IS NOT DISTINCT FROM %s
+                    AND week_rate IS NOT DISTINCT FROM %s
+                    AND month_rate IS NOT DISTINCT FROM %s;
+                """,
+                (
+                    equipment_item["Project Type"],
+                    equipment_item["Equipment"],
+                    equipment_item["Day"],
+                    equipment_item["Week"],
+                    equipment_item["Month"],
+                ),
+            )
+            deleted_rows = cur.rowcount
+        conn.commit()
+
+    return deleted_rows
 
 
 class EquipmentBook:
     def __init__(self):
-
-        self.EQUIPMENT_DATA = "json_files/equipment.json"
         self.filtered_equipment = []
         self.total_equipment_cost = 0
         self.FONT = "Times New Roman"
@@ -16,13 +165,15 @@ class EquipmentBook:
         self.TITLE_FONT_SIZE = 16
 
 
-    def open_equipment_book(self, main_equipment_text, update_total_callback=None):
+    def open_equipment_book(self, main_equipment_text, 
+                            update_total_callback=None, 
+                            standalone_mode=False):
         """
         Open the Equipment Management Window.
 
         This function creates a new window for managing equipment. It allows the user
         to add, update, remove, search, and select equipment for a project. The equipment
-        data is stored in a JSON file, and the user can interact with the data through
+        data is stored in PostgreSQL, and the user can interact with the data through
         a graphical interface.
 
         Parameters:
@@ -32,42 +183,28 @@ class EquipmentBook:
         None
         """
 
-        def load_data(file_path):
-            """
-            Load data from a JSON file.
+        selected_project_equipment = []
 
-            This function checks if the specified JSON file exists. If it does, it reads
-            the file and returns the data as a list. If the file does not exist, it returns
-            an empty list.
+        def get_selected_equipment():
+            """Return selected equipment index and record from current view."""
+            selected_item = equipment_list.selection()
+            if not selected_item:
+                return None, None
 
-            Parameters:
-            file_path (str): The path to the JSON file.
+            item_index = int(selected_item[0])
+            equipment_data = self.filtered_equipment if self.filtered_equipment else fetch_equipment_from_postgresql()
+            if item_index >= len(equipment_data):
+                return None, None
 
-            Returns:
-            list: The data loaded from the JSON file, or an empty list if the file does not exist.
-            """
-            if os.path.exists(file_path):
-                with open(file_path, 'r') as file:
-                    return json.load(file)
-            return []
+            return item_index, equipment_data[item_index]
 
 
-        # Save data to file
-        def save_data(data, file_path):
-            """
-            Save data to a JSON file.
-
-            This function writes the specified data to a JSON file at the specified file path.
-
-            Parameters:
-            data (list): The data to be saved to the JSON file.
-            file_path (str): The path to the JSON file.
-
-            Returns:
-            None
-            """
-            with open(file_path, 'w') as file:
-                json.dump(data, file, indent=4)
+        def parse_rate_values(day_value, week_value, month_value):
+            """Parse rate strings from the UI into floats for DB operations."""
+            try:
+                return float(day_value), float(week_value), float(month_value)
+            except ValueError:
+                return None
 
 
         def clear_fields():
@@ -97,7 +234,7 @@ class EquipmentBook:
             Add a new equipment entry.
 
             This function retrieves the project type, equipment name, and pricing details
-            from the input fields and adds a new equipment entry to the JSON file. If the
+            from the input fields and adds a new equipment entry to PostgreSQL. If the
             equipment name is missing, it shows a warning message.
 
             Parameters:
@@ -107,23 +244,21 @@ class EquipmentBook:
             None
             """
             project_type = combo_project_type.get()
-            equipment = entry_equipment.get()
+            equipment_name = entry_equipment.get().strip()
             day_pricing = entry_day_pricing.get()
             week_pricing = entry_week_pricing.get()
             month_pricing = entry_month_pricing.get()
+            rates = parse_rate_values(day_pricing, week_pricing, month_pricing)
 
-            if equipment:
-                new_equipment = {
-                    "Project Type": project_type,
-                    "Equipment": equipment, 
-                    "Day": day_pricing, 
-                    "Week": week_pricing,
-                    "Month": month_pricing,
-                }
-
-                equipment = load_data(self.EQUIPMENT_DATA)
-                equipment.append(new_equipment)
-                save_data(equipment, self.EQUIPMENT_DATA)
+            if equipment_name and rates:
+                day_rate, week_rate, month_rate = rates
+                insert_equipment_to_postgresql(
+                    project_type if project_type else "N/A",
+                    equipment_name,
+                    day_rate,
+                    week_rate,
+                    month_rate,
+                )
 
                 # messagebox.showinfo("Success", "Equipment added successfully!")
                 show_toast("Equipment added successfully!", "info")
@@ -141,7 +276,7 @@ class EquipmentBook:
 
             This function retrieves the selected equipment from the equipment list, updates
             its details with the values from the input fields, and saves the updated equipment
-            list to the JSON file. If no equipment is selected, it shows a warning message.
+            row to PostgreSQL. If no equipment is selected, it shows a warning message.
 
             Parameters:
             None
@@ -149,27 +284,42 @@ class EquipmentBook:
             Returns:
             None
             """
-            selected_item = equipment_list.selection()
-            if selected_item:
-                item_index = int(selected_item[0])
-                equipment = load_data(self.EQUIPMENT_DATA)
-                
-                equipment[item_index] = {
+            _, selected_equipment = get_selected_equipment()
+            day_pricing = entry_day_pricing.get()
+            week_pricing = entry_week_pricing.get()
+            month_pricing = entry_month_pricing.get()
+            rates = parse_rate_values(day_pricing, week_pricing, month_pricing)
+
+            if selected_equipment and rates:
+                day_rate, week_rate, month_rate = rates
+                updated_equipment = {
                     "Project Type": combo_project_type.get() if combo_project_type.get() else "N/A",
-                    "Equipment": entry_equipment.get(),
-                    "Day": entry_day_pricing.get(),
-                    "Week": entry_week_pricing.get(),
-                    "Month": entry_month_pricing.get(),
+                    "Equipment": entry_equipment.get().strip(),
+                    "Day": day_rate,
+                    "Week": week_rate,
+                    "Month": month_rate,
                 }
-                
-                save_data(equipment, self.EQUIPMENT_DATA)
+
+                original_equipment = {
+                    "Project Type": selected_equipment["Project Type"],
+                    "Equipment": selected_equipment["Equipment"],
+                    "Day": float(selected_equipment["Day"]),
+                    "Week": float(selected_equipment["Week"]),
+                    "Month": float(selected_equipment["Month"]),
+                }
+
+                updated_rows = update_equipment_in_postgresql(original_equipment, updated_equipment)
+                if updated_rows == 0:
+                    show_toast("No matching equipment found to update.", "warning")
+                    return
+
                 # messagebox.showinfo("Success", "Equipment updated successfully!")
                 show_toast("Equipment updated successfully!", "info")
                 clear_fields()
                 update_equipment_list()
             else:
                 # messagebox.showwarning("Selection Error", "No contact selected!")
-                show_toast("No equipment selected!", "warning")
+                show_toast("Select equipment and enter valid pricing values.", "warning")
 
 
         def remove_equipment():
@@ -177,7 +327,7 @@ class EquipmentBook:
             Remove an equipment entry.
 
             This function retrieves the selected equipment from the equipment list, removes
-            it from the JSON file, and updates the equipment list display. If no equipment
+            it from PostgreSQL, and updates the equipment list display. If no equipment
             is selected, it shows a warning message.
 
             Parameters:
@@ -186,12 +336,20 @@ class EquipmentBook:
             Returns:
             None
             """
-            selected_item = equipment_list.selection()
-            if selected_item:
-                item_index = int(selected_item[0])
-                equipment = load_data(self.EQUIPMENT_DATA)
-                del equipment[item_index]
-                save_data(equipment, self.EQUIPMENT_DATA)
+            _, selected_equipment = get_selected_equipment()
+            if selected_equipment:
+                equipment_to_delete = {
+                    "Project Type": selected_equipment["Project Type"],
+                    "Equipment": selected_equipment["Equipment"],
+                    "Day": float(selected_equipment["Day"]),
+                    "Week": float(selected_equipment["Week"]),
+                    "Month": float(selected_equipment["Month"]),
+                }
+                deleted_rows = delete_equipment_from_postgresql(equipment_to_delete)
+                if deleted_rows == 0:
+                    show_toast("No matching equipment found to remove.", "warning")
+                    return
+
                 # messagebox.showinfo("Success", "Equipment removed successfully!")
                 show_toast("Equipment removed successfully!", "info")
                 clear_fields()
@@ -215,7 +373,6 @@ class EquipmentBook:
             Returns:
             None
             """
-            global filtered_equipment
             project_type = combo_project_type.get().lower()
             equipment_name = entry_equipment.get().lower()
 
@@ -225,18 +382,10 @@ class EquipmentBook:
                             " equipment name to search.", "warning")
                 return
 
-            # Load equipment data from the JSON file
-            equipment_data = load_data(self.EQUIPMENT_DATA)
-
-            # Filter the equipment data based on the search criteria
-            filtered_equipment = [
-                equipment_item for equipment_item in equipment_data
-                if (project_type in equipment_item["Project Type"].lower() if project_type else True) and
-                (equipment_name in equipment_item["Equipment"].lower() if equipment_name else True)
-            ]
+            self.filtered_equipment = fetch_equipment_from_postgresql(project_type, equipment_name)
 
             # Update the equipment list display with the filtered results
-            update_equipment_list(filtered_equipment)
+            update_equipment_list(self.filtered_equipment)
 
 
         def clear_results():
@@ -252,13 +401,12 @@ class EquipmentBook:
             Returns:
             None
             """
-            global filtered_equipment
-            filtered_equipment = []
+            self.filtered_equipment = []
             update_equipment_list()
             clear_fields()
 
 
-        # Handle double-click event on contact list
+        # Handle double-click event on equipment list
         def on_item_double_click(event):
             """
             Handle the double-click event on the equipment list.
@@ -274,12 +422,8 @@ class EquipmentBook:
             Returns:
             None
             """
-            # global filtered_equipment
-            selected_item = equipment_list.selection()
-            if selected_item:
-                item_index = int(selected_item[0])
-                equipment = self.filtered_equipment if self.filtered_equipment else load_data(self.EQUIPMENT_DATA)
-                selected_equipment = equipment[item_index]
+            _, selected_equipment = get_selected_equipment()
+            if selected_equipment:
                 combo_project_type.set(selected_equipment["Project Type"])
                 entry_equipment.delete(0, tk.END)
                 entry_equipment.insert(0, selected_equipment["Equipment"])
@@ -296,7 +440,7 @@ class EquipmentBook:
             Update the equipment list display.
 
             This function updates the equipment list display with the equipment data
-            from the JSON file. If a filtered equipment list is provided, it displays
+            from PostgreSQL. If a filtered equipment list is provided, it displays
             the filtered equipment instead.
 
             Parameters:
@@ -306,7 +450,7 @@ class EquipmentBook:
             Returns:
             None
             """
-            equipment_data = load_data(self.EQUIPMENT_DATA) if filtered_equipment is None else filtered_equipment
+            equipment_data = fetch_equipment_from_postgresql() if filtered_equipment is None else filtered_equipment
             equipment_list.delete(*equipment_list.get_children())
             for index, equipment_item in enumerate(equipment_data):
                 equipment_list.insert("", "end", iid=index, 
@@ -331,11 +475,8 @@ class EquipmentBook:
             Returns:
             None
             """
-            selected_item = equipment_list.selection()
-            if selected_item:
-                item_index = int(selected_item[0])
-                equipment = self.filtered_equipment if self.filtered_equipment else load_data(self.EQUIPMENT_DATA)
-                selected_equipment = equipment[item_index]
+            _, selected_equipment = get_selected_equipment()
+            if selected_equipment:
 
                 # Get the selected pricing type and duration
                 pricing_type = combo_pricing_type.get()
@@ -359,8 +500,18 @@ class EquipmentBook:
                     f"Price: ${total_price:.2f}\n\n"
                 )
 
+                selected_project_equipment.append(
+                    {
+                        "equipment": selected_equipment["Equipment"],
+                        "duration": int(duration),
+                        "pricing_type": pricing_type,
+                        "total_price": total_price,
+                    }
+                )
+
                 # Append the equipment details to the equipment_text widget
-                main_equipment_text.insert("end", equipment_details)
+                if main_equipment_text is not None:
+                    main_equipment_text.insert("end", equipment_details)
 
                 if update_total_callback:
                     update_total_callback(self.total_equipment_cost)
@@ -400,22 +551,54 @@ class EquipmentBook:
 
             # Set background color based on message type
             bg_color = "green" if message_type == "info" else "orange" if message_type == "warning" else "red"
-            # tk.Label(toast, text=message, bg=bg_color, fg="white", font=(FONT, FONT_SIZE)).pack(fill="both", expand=True)
 
-            # fg_color = "green" if message_type == "info" else "orange" if message_type == "warning" else "red"
-            tk.Label(toast, text=message, bg=bg_color, fg="black", font=(self.FONT, self.FONT_SIZE)).pack(fill="both", expand=True)
+            tk.Label(toast, text=message, bg=bg_color, fg="black", 
+                     font=(self.FONT, self.FONT_SIZE)).pack(fill="both", expand=True)
 
-            # Auto-dismiss the toast after 3 seconds
-            # toast.after(3000, toast.destroy)
+            # Use a Tcl-level `after` script so teardown does not try to invoke
+            # a deleted Python callback command during window shutdown.
+            toast.tk.call("after", 3000, f"catch {{destroy {toast._w}}}")
 
-            # Auto-dismiss the toast after 3 seconds, but check if it still exists
-            def safe_destroy():
-                try:
-                    toast.destroy()
-                except tk.TclError:
-                    pass
+        def finish_button():
+            """Close the equipment picker and show standalone summary results."""
+            if not standalone_mode:
+                return
 
-            toast.after(3000, safe_destroy)
+            if not selected_project_equipment:
+                show_toast("No equipment added to project.", "warning")
+                return
+
+            result_lines = []
+            for item in selected_project_equipment:
+                result_lines.append(
+                    f"Equipment: {item['equipment']}\n"
+                    f"Duration: {item['duration']} {item['pricing_type']}\n"
+                    f"Price: ${item['total_price']:.2f}\n"
+                )
+
+            result = "\n".join(result_lines)
+            result += f"\n\nTotal Equipment Cost: ${self.total_equipment_cost:,.2f}"
+
+            equipment_window.destroy()
+
+            summary_window = tk.Tk()
+            summary_window.title("Equipment Summary")
+            summary_window.geometry("450x350")
+            summary_window.config(padx=10, pady=10)
+
+            custom_font = font.Font(family="Times New Roman", size=12)
+            result_box = scrolledtext.ScrolledText(
+                summary_window,
+                width=50,
+                height=16,
+                font=custom_font,
+                fg="green",
+            )
+            result_box.insert("1.0", result)
+            result_box.config(state="disabled")
+            result_box.pack(fill="both", expand=True)
+
+            summary_window.mainloop()
 
         # ======================================================================== #
         # =============================== Equipment GUI ========================== #
@@ -479,6 +662,9 @@ class EquipmentBook:
                 command=clear_results).grid(row=4, column=2, sticky="w", pady=5)
         Button(equipment_window, width=15, text="Add to Project",
             command=add_equipment_to_project).grid(row=5, column=2, sticky="w", pady=5)
+        if standalone_mode:
+            Button(equipment_window, width=15, text="Finish",
+                   command=finish_button).grid(row=6, column=2, sticky="w", pady=5)
 
         equipment_list = ttk.Treeview(equipment_window, columns=("Project Type", "Equipment",
                                                                 "Day", "Week", "Month"), 
@@ -503,4 +689,4 @@ if __name__ == "__main__":
     root.withdraw()  # Hide the root window
     
     equipment_book = EquipmentBook()
-    equipment_book.open_equipment_book(tk.Text())  # Pass a dummy Text widget for testing
+    equipment_book.open_equipment_book(tk.Text(), standalone_mode=True)

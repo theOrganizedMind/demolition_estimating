@@ -1,4 +1,7 @@
-from building_demo import BuildingDemo
+try:
+    from .building_demo import BuildingDemo
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from building_demo import BuildingDemo
 
 
 class HouseDemo(BuildingDemo):

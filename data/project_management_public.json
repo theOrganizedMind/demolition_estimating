@@ -1,0 +1,62 @@
+{
+  "projects": [
+    {
+      "id": "pm-project-2026-0001",
+      "project_type": "Interior Demolition",
+      "project_address": "1200 Hamilton Ave, Phoenix, AZ",
+      "bid_number": "2026-0001",
+      "estimator": "Estimator One",
+      "project_sqft": "12500",
+      "duration_days": 18,
+      "bid_price": 320000.0,
+      "job_cost": 249500.0,
+      "p_and_l": 70500.0,
+      "p_and_l_percent": 22.03
+    },
+    {
+      "id": "pm-project-2026-0002",
+      "project_type": "Building Demo",
+      "project_address": "300 Foundry Rd, Birmingham, AL",
+      "bid_number": "2026-0002",
+      "estimator": "Estimator Two",
+      "project_sqft": "28500",
+      "duration_days": 25,
+      "bid_price": 685000.0,
+      "job_cost": 521250.0,
+      "p_and_l": 163750.0,
+      "p_and_l_percent": 23.91
+    }
+  ],
+  "tasks": [
+    {
+      "id": "pm-task-2026-0001-0100",
+      "cost_code": "0100",
+      "description": "Labor",
+      "cost_code_value": 1800.0,
+      "bid_number": "2026-0001",
+      "start_date": "2026-01-08",
+      "end_date": "2026-01-20",
+      "status": "Bidding"
+    },
+    {
+      "id": "pm-task-2026-0001-0300",
+      "cost_code": "0300",
+      "description": "Equipment",
+      "cost_code_value": 4200.0,
+      "bid_number": "2026-0001",
+      "start_date": "2026-01-10",
+      "end_date": "2026-01-19",
+      "status": "Won"
+    },
+    {
+      "id": "pm-task-2026-0002-0400",
+      "cost_code": "0400",
+      "description": "Disposal",
+      "cost_code_value": 5300.0,
+      "bid_number": "2026-0002",
+      "start_date": "2026-02-03",
+      "end_date": "2026-02-21",
+      "status": "Bidding"
+    }
+  ]
+}

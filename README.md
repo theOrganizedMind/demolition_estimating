@@ -26,7 +26,8 @@ demolition_estimating/
 │   ├── equipment_sample_data_public.csv
 │   ├── contact_sample_data_public.json
 │   ├── monthly_numbers_sample_data_public.csv
-│   └── project_sample_data_public.csv
+│   ├── project_sample_data_public.csv
+│   └── project_management_public.json
 ├── estimate_project/
 │   ├── building_demo.py
 │   ├── contact_book.py
@@ -116,6 +117,7 @@ If PostgreSQL is unavailable, these programs fall back to public sample data in 
 - `estimate_project/equipment_book.py` → `data/equipment_sample_data_public.csv`
 - `estimate_project/estimating_main.py` and `estimate_project/work_scope_bid_proposal.py` → `data/project_sample_data_public.csv`
 - `financials/financials_main.py` → `data/monthly_numbers_sample_data_public.csv` and `data/equipment_sample_data_public.csv`
+- `estimate_project/project_management.py` (public mode) → `data/project_management_public.json`
 
 ## Running The Apps
 

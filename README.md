@@ -23,9 +23,10 @@ This repo currently has two main GUI applications:
 ```text
 demolition_estimating/
 ├── data/
-│   ├── equipment_sample_data_(2026-08-01).csv
-│   ├── monthly_numbers_sample_data_(2026-08-01).csv
-│   └── project_sample_data_(2026-08-01).csv
+│   ├── equipment_sample_data_public.csv
+│   ├── contact_sample_data_public.json
+│   ├── monthly_numbers_sample_data_public.csv
+│   └── project_sample_data_public.csv
 ├── estimate_project/
 │   ├── building_demo.py
 │   ├── contact_book.py
@@ -41,9 +42,6 @@ demolition_estimating/
 │   ├── financials_main.py
 │   ├── postgresql.py
 │   └── revenue.py
-├── json_files/
-│   ├── contacts.json
-│   └── equipment.json
 ├── requirements.txt
 ├── README.md
 └── LICENSE.txt
@@ -112,7 +110,12 @@ The application expects these tables:
 - `company` and `client`
    - Used by the contact book workflow
 
-Sample CSVs in the `data/` directory show expected shape and naming.
+If PostgreSQL is unavailable, these programs fall back to public sample data in `data/`:
+
+- `estimate_project/contact_book.py` → `data/contact_sample_data_public.json`
+- `estimate_project/equipment_book.py` → `data/equipment_sample_data_public.csv`
+- `estimate_project/estimating_main.py` and `estimate_project/work_scope_bid_proposal.py` → `data/project_sample_data_public.csv`
+- `financials/financials_main.py` → `data/monthly_numbers_sample_data_public.csv` and `data/equipment_sample_data_public.csv`
 
 ## Running The Apps
 
@@ -145,10 +148,7 @@ python estimate_project/estimating_main.py
 
 ## Notes
 
-- The `json_files/` directory remains in the repo, but core contact/equipment 
-  workflows are currently PostgreSQL-backed.
-- If your data queries return no rows, UI warnings may appear and model/chart 
-  features will not run until data is present.
+- 
 
 ## License
 

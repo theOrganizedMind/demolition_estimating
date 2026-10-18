@@ -81,6 +81,33 @@ def test_fetch_equipment_from_postgresql_maps_rows(monkeypatch):
     assert params == ["%building%", "%exc%"]
 
 
+def test_fetch_equipment_from_postgresql_falls_back_to_sample(monkeypatch):
+    def raise_connection_error():
+        raise OSError("database unavailable")
+
+    monkeypatch.setattr(equipment_book, "get_db_connection", raise_connection_error)
+    monkeypatch.setattr(
+        equipment_book,
+        "_load_sample_equipment_rows",
+        lambda: [
+            ("Building Demo", "Excavator", "1200", "5000", "18000"),
+            ("Interior Demolition", "Dust Extractor", "200", "700", "2100"),
+        ],
+    )
+
+    result = equipment_book.fetch_equipment_from_postgresql("building", "exc")
+
+    assert result == [
+        {
+            "Project Type": "Building Demo",
+            "Equipment": "Excavator",
+            "Day": "1200",
+            "Week": "5000",
+            "Month": "18000",
+        }
+    ]
+
+
 def test_insert_equipment_to_postgresql_executes_insert_and_commits(monkeypatch):
     cursor = DummyCursor()
     conn = DummyConnection(cursor)
@@ -93,6 +120,19 @@ def test_insert_equipment_to_postgresql_executes_insert_and_commits(monkeypatch)
     assert "INSERT INTO equipment" in query
     assert params == ("House Demo", "Skid Steer", 300, 1000, 3200)
     assert conn.committed is True
+
+
+def test_insert_equipment_to_postgresql_raises_read_only_error_on_connection_failure(monkeypatch):
+    def raise_connection_error():
+        raise OSError("database unavailable")
+
+    monkeypatch.setattr(equipment_book, "get_db_connection", raise_connection_error)
+
+    try:
+        equipment_book.insert_equipment_to_postgresql("House Demo", "Skid Steer", 300, 1000, 3200)
+        assert False, "Expected RuntimeError to be raised"
+    except RuntimeError as exc:
+        assert "read-only" in str(exc).lower()
 
 
 def test_update_equipment_in_postgresql_returns_updated_rows(monkeypatch):

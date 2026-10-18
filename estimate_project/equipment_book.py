@@ -1,30 +1,66 @@
-from tkinter import Tk, ttk, Label, Entry, Button, scrolledtext, font
+from tkinter import Tk, ttk, Label, Entry, Button, scrolledtext, font, messagebox
 import tkinter as tk
 from tkinter import *
+import csv
+import logging
+from pathlib import Path
 
 from postgresql import get_db_connection
 
-# ========================================================================== #
-# ================================== INFO ================================== #
-# ========================================================================== #
-# 
-# ========================================================================== #
-# ================================== TODO ================================== #
-# ========================================================================== #
-# TODO: 
-# Add PostgreSQL variables to .env before running program. 
-# See postgresql.py for required parameters.
-# ========================================================================== #
+
+logger = logging.getLogger(__name__)
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+EQUIPMENT_SAMPLE_CSV = DATA_DIR / "equipment_sample_data_public.csv"
+_SQL_FALLBACK_NOTICE_SHOWN = False
+
+
+def _notify_sql_fallback_once():
+    """Show a single SQL fallback warning message for this app run."""
+    global _SQL_FALLBACK_NOTICE_SHOWN
+    if _SQL_FALLBACK_NOTICE_SHOWN:
+        return
+    _SQL_FALLBACK_NOTICE_SHOWN = True
+    messagebox.showwarning(
+        "SQL Connection Failed",
+        "Failed to fetch data from SQL database. Falling back to sample data.",
+    )
+
+
+def _load_sample_equipment_rows():
+    """Load equipment sample rows from CSV."""
+    rows = []
+    try:
+        with EQUIPMENT_SAMPLE_CSV.open("r", newline="", encoding="utf-8") as sample_file:
+            reader = csv.DictReader(sample_file)
+            for row in reader:
+                rows.append(
+                    (
+                        row.get("project_type"),
+                        row.get("equipment_name"),
+                        row.get("day_rate"),
+                        row.get("week_rate"),
+                        row.get("month_rate"),
+                    )
+                )
+    except (FileNotFoundError, OSError, csv.Error) as exc:
+        logger.exception("Unable to load equipment sample data from %s", EQUIPMENT_SAMPLE_CSV)
+        raise RuntimeError(
+            f"Equipment sample data is unavailable at '{EQUIPMENT_SAMPLE_CSV}'."
+        ) from exc
+    return rows
+
 
 def _format_rate(value):
     """Format numeric rates for display in the UI."""
-    if value is None:
+    if value in (None, ""):
         return ""
-
-    value = float(value)
-    if value.is_integer():
-        return str(int(value))
-    return f"{value:.2f}".rstrip("0").rstrip(".")
+    try:
+        value = float(value)
+        if value.is_integer():
+            return str(int(value))
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return ""
 
 
 def fetch_equipment_from_postgresql(project_type=None, equipment_name=None):
@@ -53,12 +89,18 @@ def fetch_equipment_from_postgresql(project_type=None, equipment_name=None):
 
     query += " ORDER BY project_type, equipment_name;"
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
+    used_fallback = False
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                rows = cur.fetchall()
+    except (RuntimeError, OSError):
+        _notify_sql_fallback_once()
+        rows = _load_sample_equipment_rows()
+        used_fallback = True
 
-    return [
+    equipment_list = [
         {
             "Project Type": row[0] or "N/A",
             "Equipment": row[1] or "",
@@ -69,6 +111,19 @@ def fetch_equipment_from_postgresql(project_type=None, equipment_name=None):
         for row in rows
     ]
 
+    if used_fallback:
+        if project_type:
+            equipment_list = [
+                item for item in equipment_list
+                if project_type.lower() in item["Project Type"].lower()
+            ]
+        if equipment_name:
+            equipment_list = [
+                item for item in equipment_list
+                if equipment_name.lower() in item["Equipment"].lower()
+            ]
+    return equipment_list
+
 
 def insert_equipment_to_postgresql(project_type, 
                                    equipment_name, 
@@ -76,81 +131,99 @@ def insert_equipment_to_postgresql(project_type,
                                    week_rate, 
                                    month_rate):
     """Insert a new equipment row into PostgreSQL."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO equipment (project_type, equipment_name, day_rate, week_rate, month_rate)
-                VALUES (%s, %s, %s, %s, %s);
-                """,
-                (project_type, equipment_name, day_rate, week_rate, month_rate),
-            )
-        conn.commit()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO equipment (project_type, equipment_name, day_rate, week_rate, month_rate)
+                    VALUES (%s, %s, %s, %s, %s);
+                    """,
+                    (project_type, equipment_name, day_rate, week_rate, month_rate),
+                )
+            conn.commit()
+    except (RuntimeError, OSError) as exc:
+        logger.exception("Unable to insert equipment into PostgreSQL")
+        raise RuntimeError(
+            "Database connection is unavailable. Sample equipment data is read-only."
+        ) from exc
 
 
 def update_equipment_in_postgresql(original_equipment, updated_equipment):
     """Update an equipment row by matching its original values."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE equipment
-                SET
-                    project_type = %s,
-                    equipment_name = %s,
-                    day_rate = %s,
-                    week_rate = %s,
-                    month_rate = %s
-                WHERE
-                    project_type IS NOT DISTINCT FROM %s
-                    AND equipment_name IS NOT DISTINCT FROM %s
-                    AND day_rate IS NOT DISTINCT FROM %s
-                    AND week_rate IS NOT DISTINCT FROM %s
-                    AND month_rate IS NOT DISTINCT FROM %s;
-                """,
-                (
-                    updated_equipment["Project Type"],
-                    updated_equipment["Equipment"],
-                    updated_equipment["Day"],
-                    updated_equipment["Week"],
-                    updated_equipment["Month"],
-                    original_equipment["Project Type"],
-                    original_equipment["Equipment"],
-                    original_equipment["Day"],
-                    original_equipment["Week"],
-                    original_equipment["Month"],
-                ),
-            )
-            updated_rows = cur.rowcount
-        conn.commit()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE equipment
+                    SET
+                        project_type = %s,
+                        equipment_name = %s,
+                        day_rate = %s,
+                        week_rate = %s,
+                        month_rate = %s
+                    WHERE
+                        project_type IS NOT DISTINCT FROM %s
+                        AND equipment_name IS NOT DISTINCT FROM %s
+                        AND day_rate IS NOT DISTINCT FROM %s
+                        AND week_rate IS NOT DISTINCT FROM %s
+                        AND month_rate IS NOT DISTINCT FROM %s;
+                    """,
+                    (
+                        updated_equipment["Project Type"],
+                        updated_equipment["Equipment"],
+                        updated_equipment["Day"],
+                        updated_equipment["Week"],
+                        updated_equipment["Month"],
+                        original_equipment["Project Type"],
+                        original_equipment["Equipment"],
+                        original_equipment["Day"],
+                        original_equipment["Week"],
+                        original_equipment["Month"],
+                    ),
+                )
+                updated_rows = cur.rowcount
+            conn.commit()
+    except (RuntimeError, OSError) as exc:
+        logger.exception("Unable to update equipment in PostgreSQL")
+        raise RuntimeError(
+            "Database connection is unavailable. Sample equipment data is read-only."
+        ) from exc
 
     return updated_rows
 
 
 def delete_equipment_from_postgresql(equipment_item):
     """Delete an equipment row by matching all visible values."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM equipment
-                WHERE
-                    project_type IS NOT DISTINCT FROM %s
-                    AND equipment_name IS NOT DISTINCT FROM %s
-                    AND day_rate IS NOT DISTINCT FROM %s
-                    AND week_rate IS NOT DISTINCT FROM %s
-                    AND month_rate IS NOT DISTINCT FROM %s;
-                """,
-                (
-                    equipment_item["Project Type"],
-                    equipment_item["Equipment"],
-                    equipment_item["Day"],
-                    equipment_item["Week"],
-                    equipment_item["Month"],
-                ),
-            )
-            deleted_rows = cur.rowcount
-        conn.commit()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM equipment
+                    WHERE
+                        project_type IS NOT DISTINCT FROM %s
+                        AND equipment_name IS NOT DISTINCT FROM %s
+                        AND day_rate IS NOT DISTINCT FROM %s
+                        AND week_rate IS NOT DISTINCT FROM %s
+                        AND month_rate IS NOT DISTINCT FROM %s;
+                    """,
+                    (
+                        equipment_item["Project Type"],
+                        equipment_item["Equipment"],
+                        equipment_item["Day"],
+                        equipment_item["Week"],
+                        equipment_item["Month"],
+                    ),
+                )
+                deleted_rows = cur.rowcount
+            conn.commit()
+    except (RuntimeError, OSError) as exc:
+        logger.exception("Unable to delete equipment from PostgreSQL")
+        raise RuntimeError(
+            "Database connection is unavailable. Sample equipment data is read-only."
+        ) from exc
 
     return deleted_rows
 
@@ -252,18 +325,19 @@ class EquipmentBook:
 
             if equipment_name and rates:
                 day_rate, week_rate, month_rate = rates
-                insert_equipment_to_postgresql(
-                    project_type if project_type else "N/A",
-                    equipment_name,
-                    day_rate,
-                    week_rate,
-                    month_rate,
-                )
-
-                # messagebox.showinfo("Success", "Equipment added successfully!")
-                show_toast("Equipment added successfully!", "info")
-                clear_fields()
-                update_equipment_list()
+                try:
+                    insert_equipment_to_postgresql(
+                        project_type if project_type else "N/A",
+                        equipment_name,
+                        day_rate,
+                        week_rate,
+                        month_rate,
+                    )
+                    show_toast("Equipment added successfully!", "info")
+                    clear_fields()
+                    update_equipment_list()
+                except RuntimeError:
+                    show_toast("Unable to add equipment while running with sample data.", "error")
             else:
                 # messagebox.showwarning("Input Error", 
                                     # "Equipment and pricing are required fields.")
@@ -308,15 +382,17 @@ class EquipmentBook:
                     "Month": float(selected_equipment["Month"]),
                 }
 
-                updated_rows = update_equipment_in_postgresql(original_equipment, updated_equipment)
-                if updated_rows == 0:
-                    show_toast("No matching equipment found to update.", "warning")
-                    return
+                try:
+                    updated_rows = update_equipment_in_postgresql(original_equipment, updated_equipment)
+                    if updated_rows == 0:
+                        show_toast("No matching equipment found to update.", "warning")
+                        return
 
-                # messagebox.showinfo("Success", "Equipment updated successfully!")
-                show_toast("Equipment updated successfully!", "info")
-                clear_fields()
-                update_equipment_list()
+                    show_toast("Equipment updated successfully!", "info")
+                    clear_fields()
+                    update_equipment_list()
+                except RuntimeError:
+                    show_toast("Unable to update equipment while running with sample data.", "error")
             else:
                 # messagebox.showwarning("Selection Error", "No contact selected!")
                 show_toast("Select equipment and enter valid pricing values.", "warning")
@@ -345,15 +421,17 @@ class EquipmentBook:
                     "Week": float(selected_equipment["Week"]),
                     "Month": float(selected_equipment["Month"]),
                 }
-                deleted_rows = delete_equipment_from_postgresql(equipment_to_delete)
-                if deleted_rows == 0:
-                    show_toast("No matching equipment found to remove.", "warning")
-                    return
+                try:
+                    deleted_rows = delete_equipment_from_postgresql(equipment_to_delete)
+                    if deleted_rows == 0:
+                        show_toast("No matching equipment found to remove.", "warning")
+                        return
 
-                # messagebox.showinfo("Success", "Equipment removed successfully!")
-                show_toast("Equipment removed successfully!", "info")
-                clear_fields()
-                update_equipment_list()
+                    show_toast("Equipment removed successfully!", "info")
+                    clear_fields()
+                    update_equipment_list()
+                except RuntimeError:
+                    show_toast("Unable to remove equipment while running with sample data.", "error")
             else:
                 # messagebox.showwarning("Selection Error", "No equipment selected!")
                 show_toast("No equipment selected!", "warning")
@@ -603,7 +681,9 @@ class EquipmentBook:
         # ======================================================================== #
         # =============================== Equipment GUI ========================== #
         # ======================================================================== #
-        equipment_window = Tk()
+        parent_window = tk._default_root
+        owns_event_loop = parent_window is None
+        equipment_window = Tk() if owns_event_loop else tk.Toplevel(parent_window)
         equipment_window.title("Equipment")
         equipment_window.config(padx=25, pady=25)
 
@@ -681,12 +761,10 @@ class EquipmentBook:
 
         update_equipment_list()
 
-        equipment_window.mainloop()
+        if owns_event_loop:
+            equipment_window.mainloop()
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.withdraw()  # Hide the root window
-    
     equipment_book = EquipmentBook()
-    equipment_book.open_equipment_book(tk.Text(), standalone_mode=True)
+    equipment_book.open_equipment_book(None, standalone_mode=True)

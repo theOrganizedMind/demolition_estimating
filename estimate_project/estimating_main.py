@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import mplcursors
+from pathlib import Path
 from tkinter import *
 from tkinter import ttk, messagebox, scrolledtext, font
 from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV, KFold
@@ -13,29 +14,96 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from datetime import datetime
 from idlelib.tooltip import Hovertip
 import logging
+from pandas.io.sql import DatabaseError as PandasDatabaseError
 
 from postgresql import get_db_connection
 
-# ========================================================================== #
-# ================================== INFO ================================== #
-# ========================================================================== #
-
-# ========================================================================== #
-# ================================== TODO ================================== #
-# ========================================================================== #
-# TODO: 
-# Add PostgreSQL variables to .env before running program. 
-# See postgresql.py for required parameters.
-# ========================================================================== #
 
 todays_date = datetime.now().strftime("%m%d%Y")
+logger = logging.getLogger(__name__)
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+PROJECT_SAMPLE_CSV = DATA_DIR / "project_sample_data_public.csv"
+_SQL_FALLBACK_NOTICE_SHOWN = False
+
+
+def _notify_sql_fallback_once():
+    """Show a single SQL fallback warning message for this app run."""
+    global _SQL_FALLBACK_NOTICE_SHOWN
+    if _SQL_FALLBACK_NOTICE_SHOWN:
+        return
+    _SQL_FALLBACK_NOTICE_SHOWN = True
+    messagebox.showwarning(
+        "SQL Connection Failed",
+        "Failed to fetch data from SQL database. Falling back to sample data.",
+    )
 
 # =========================================================================== #
 # ======================== Get Data from PostgreSQL ========================= #
 # =========================================================================== #
 
+def _normalize_project_dataframe(df, data_source_label):
+    """Normalize raw project rows for downstream model training."""
+    if df.empty:
+        messagebox.showwarning(
+            "No Project Data",
+            f"No project rows were returned from {data_source_label}.",
+        )
+        return df
+
+    df['SqFt'] = pd.to_numeric(df['SqFt'], errors='coerce')
+    df['Bid Price'] = pd.to_numeric(df['Bid Price'], errors='coerce')
+    df['Job Cost'] = pd.to_numeric(df['Job Cost'], errors='coerce')
+    df['Awarded Date'] = pd.to_datetime(df['Awarded Date'], errors='coerce')
+
+    # Drop rows with missing model-critical values to keep downstream training stable.
+    df = df.dropna(subset=['Job Number', 'Description', 'Structure Type', 'SqFt', 'Bid Price', 'Job Cost'])
+    df['SqFt'] = df['SqFt'].astype(int)
+    safe_bid_price = df['Bid Price'].replace({0: pd.NA})
+    df['Profit and Loss %'] = (((df['Bid Price'] - df['Job Cost']) / safe_bid_price) * 100).round(2).fillna(0.0)
+    df = df.set_index('Job Number')
+
+    print(f"\nData source: {data_source_label}")
+    print("\nDataframe with 'Profit and Loss %' column:")
+    print(df.tail())
+    return df
+
+
+def _load_sample_project_data():
+    """Load project sample data from CSV."""
+    try:
+        return pd.read_csv(
+            PROJECT_SAMPLE_CSV,
+            usecols=[
+                "job_number",
+                "awarded_date",
+                "project_description",
+                "structure_type",
+                "sqft",
+                "bid_price",
+                "job_cost",
+                "estimator",
+            ],
+        ).rename(
+            columns={
+                "job_number": "Job Number",
+                "awarded_date": "Awarded Date",
+                "project_description": "Description",
+                "structure_type": "Structure Type",
+                "sqft": "SqFt",
+                "bid_price": "Bid Price",
+                "job_cost": "Job Cost",
+                "estimator": "Estimator",
+            }
+        )
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        logger.exception("Unable to load project sample data from %s", PROJECT_SAMPLE_CSV)
+        raise RuntimeError(
+            f"Project sample data is unavailable at '{PROJECT_SAMPLE_CSV}'."
+        ) from exc
+
+
 def fetch_data_from_postgresql():
-    """Fetch project data from PostgreSQL and shape it for model training."""
+    """Fetch project data from PostgreSQL and fall back to local sample CSV."""
     query = """
         SELECT
             job_number AS "Job Number",
@@ -49,31 +117,14 @@ def fetch_data_from_postgresql():
         FROM project;
     """
 
-    with get_db_connection() as conn:
-        df = pd.read_sql_query(query, conn)
-
-    if df.empty:
-        messagebox.showwarning(
-            "No Project Data",
-            "No project rows were returned from PostgreSQL table 'project'.",
-        )
-        return df
-
-    df['SqFt'] = pd.to_numeric(df['SqFt'], errors='coerce')
-    df['Bid Price'] = pd.to_numeric(df['Bid Price'], errors='coerce')
-    df['Job Cost'] = pd.to_numeric(df['Job Cost'], errors='coerce')
-    df['Awarded Date'] = pd.to_datetime(df['Awarded Date'], errors='coerce')
-
-    # Drop rows with missing model-critical values to keep downstream training stable.
-    df = df.dropna(subset=['Job Number', 'Description', 'Structure Type', 'SqFt', 'Bid Price', 'Job Cost'])
-    df['SqFt'] = df['SqFt'].astype(int)
-    df['Profit and Loss %'] = round(((df['Bid Price'] - df['Job Cost']) / df['Bid Price']) * 100, 2)
-    df = df.set_index('Job Number')
-
-    print("\nData from PostgreSQL")
-    print("\nDataframe with 'Profit and Loss %' column:")
-    print(df.tail())
-    return df
+    try:
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn)
+        return _normalize_project_dataframe(df, "PostgreSQL table 'project'")
+    except (RuntimeError, OSError, PandasDatabaseError):
+        _notify_sql_fallback_once()
+        df = _load_sample_project_data()
+        return _normalize_project_dataframe(df, f"sample CSV '{PROJECT_SAMPLE_CSV.name}'")
 
 # ===========================================================================
 # ======================= New Estimate costs using models ===================
@@ -105,7 +156,7 @@ def train_models(df):
     # Define the column transformer for one-hot encoding
     preprocessor = ColumnTransformer(
         transformers=[
-            ('cat', OneHotEncoder(), ['Description', 'Structure Type']),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), ['Description', 'Structure Type']),
             ('num', StandardScaler(), ['SqFt'])
         ])
 

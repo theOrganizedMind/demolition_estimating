@@ -1,0 +1,67 @@
+[
+  {
+    "client_id": 1001,
+    "company_id": 501,
+    "company": "Atlas Redevelopment Group",
+    "street": "1200 Hamilton Ave",
+    "city": "Phoenix",
+    "state": "AZ",
+    "zip": "85004",
+    "billing address": "1200 Hamilton Ave, Phoenix, AZ, 85004",
+    "client": "Jordan Ellis",
+    "phone": "(602) 555-0184",
+    "email": "jordan.ellis@atlasredevelopment.example"
+  },
+  {
+    "client_id": 1002,
+    "company_id": 502,
+    "company": "Summit Civic Construction",
+    "street": "85 Lakefront Blvd",
+    "city": "Cleveland",
+    "state": "OH",
+    "zip": "44114",
+    "billing address": "85 Lakefront Blvd, Cleveland, OH, 44114",
+    "client": "Morgan Patel",
+    "phone": "(216) 555-0132",
+    "email": "morgan.patel@summitcivic.example"
+  },
+  {
+    "client_id": 1003,
+    "company_id": 503,
+    "company": "Northshore Property Services",
+    "street": "440 Harbor Street",
+    "city": "Milwaukee",
+    "state": "WI",
+    "zip": "53202",
+    "billing address": "440 Harbor Street, Milwaukee, WI, 53202",
+    "client": "Casey Nguyen",
+    "phone": "(414) 555-0175",
+    "email": "casey.nguyen@northshoreps.example"
+  },
+  {
+    "client_id": 1004,
+    "company_id": 501,
+    "company": "Atlas Redevelopment Group",
+    "street": "1200 Hamilton Ave",
+    "city": "Phoenix",
+    "state": "AZ",
+    "zip": "85004",
+    "billing address": "1200 Hamilton Ave, Phoenix, AZ, 85004",
+    "client": "Taylor Brooks",
+    "phone": "(602) 555-0199",
+    "email": "taylor.brooks@atlasredevelopment.example"
+  },
+  {
+    "client_id": 1005,
+    "company_id": 504,
+    "company": "Metro Industrial Holdings",
+    "street": "300 Foundry Road",
+    "city": "Birmingham",
+    "state": "AL",
+    "zip": "35203",
+    "billing address": "300 Foundry Road, Birmingham, AL, 35203",
+    "client": "Riley Johnson",
+    "phone": "(205) 555-0167",
+    "email": "riley.johnson@metroindustrial.example"
+  }
+]

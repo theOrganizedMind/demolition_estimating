@@ -23,9 +23,15 @@ class HouseDemo(BuildingDemo):
         bid_price (float): The calculated bid price for the project (initialized to 0.0).
     """
 
-    def __init__(self, description, total_sqft: int = 0, 
+    def __init__(self, description, structure_type: str = "Other", total_sqft: int = 0, 
                  total_equipment_cost: int = 0, total_disposal_cost: int = 0, 
                  num_days: int = 0, num_guys: int = 0):
-        super().__init__(description, total_sqft, total_equipment_cost, 
-                         total_disposal_cost, num_days, num_guys)
-
+        super().__init__(
+            description,
+            structure_type,
+            total_sqft,
+            total_equipment_cost,
+            total_disposal_cost,
+            num_days,
+            num_guys,
+        )

@@ -1,0 +1,7 @@
+equipment_id,equipment_name,project_type,purchase_price,day_rate,week_rate,month_rate
+201,Mini Excavator,Building Demo,91500,1650,5300,15800
+202,Telehandler,Building Demo,128000,1950,6200,18400
+203,Dust Extractor,Interior Demolition,18900,340,1020,3100
+204,Skid Steer,Other,67500,1250,3900,11200
+205,Concrete Saw,House Demo,14200,260,850,2500
+206,Dump Trailer,Other,31800,480,1500,4200

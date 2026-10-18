@@ -1,0 +1,11 @@
+project_id,job_number,awarded_date,project_description,structure_type,sqft,bid_price,job_cost,estimator
+101,2001,2025-01-12,Interior Demolition,Other,9800,245000,178500,Estimator Alpha
+102,2002,2025-01-30,House Demo,Wood,4200,96500,71200,Estimator Bravo
+103,2003,2025-02-15,Building Demo,Metal,27400,612000,448900,Estimator Charlie
+104,2004,2025-03-07,Interior Demolition,Other,13250,318000,241500,Estimator Delta
+105,2005,2025-03-21,House Demo,Brick or Block,5600,118000,85300,Estimator Echo
+106,2006,2025-04-18,Building Demo,Wood,31800,702500,533400,Estimator Foxtrot
+107,2007,2025-05-09,Interior Demolition,Other,15000,355000,262250,Estimator Alpha
+108,2008,2025-06-03,Building Demo,Metal,45200,982000,755100,Estimator Bravo
+109,2009,2025-06-27,House Demo,Wood,6100,128000,90200,Estimator Charlie
+110,2010,2025-07-11,Interior Demolition,Other,17100,402000,289600,Estimator Delta

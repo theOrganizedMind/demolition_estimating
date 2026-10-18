@@ -1,24 +1,82 @@
-from tkinter import Tk, Label, Entry, Button, ttk
+from tkinter import Tk, Label, Entry, Button, ttk, messagebox
 import tkinter as tk
 import logging
+import json
+from pathlib import Path
 
 from postgresql import get_db_connection
 
 
 logger = logging.getLogger(__name__)
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+CONTACT_SAMPLE_JSON = DATA_DIR / "contact_sample_data_public.json"
+_SQL_FALLBACK_NOTICE_SHOWN = False
 
 
-# ========================================================================== #
-# ================================ INFO ==================================== #
-# ========================================================================== #
-# Adds and Searches for contacts stored in a PostgreSQL database. 
-# ========================================================================== #
-# ================================ TODO ==================================== #
-# ========================================================================== #
-# TODO: 
-# Add PostgreSQL variables to .env before running program. 
-# See postgresql.py for required parameters.
-# ========================================================================== #
+def _notify_sql_fallback_once():
+    """Show a single SQL fallback warning message for this app run."""
+    global _SQL_FALLBACK_NOTICE_SHOWN
+    if _SQL_FALLBACK_NOTICE_SHOWN:
+        return
+    _SQL_FALLBACK_NOTICE_SHOWN = True
+    messagebox.showwarning(
+        "SQL Connection Failed",
+        "Failed to fetch data from SQL database. Falling back to sample data.",
+    )
+
+
+def _load_sample_contacts():
+    """Load contact sample rows from JSON."""
+    try:
+        with CONTACT_SAMPLE_JSON.open("r", encoding="utf-8") as sample_file:
+            payload = json.load(sample_file)
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        logger.exception("Unable to load contact sample data from %s", CONTACT_SAMPLE_JSON)
+        raise RuntimeError(
+            f"Contact sample data is unavailable at '{CONTACT_SAMPLE_JSON}'."
+        ) from exc
+
+    contacts = payload if isinstance(payload, list) else []
+    normalized_contacts = []
+    for contact in contacts:
+        if not isinstance(contact, dict):
+            continue
+        normalized_contacts.append(
+            {
+                "client_id": contact.get("client_id"),
+                "company_id": contact.get("company_id"),
+                "company": contact.get("company") or "N/A",
+                "billing address": contact.get("billing address") or "N/A",
+                "client": contact.get("client") or "N/A",
+                "phone": contact.get("phone") or "N/A",
+                "email": contact.get("email") or "N/A",
+                "street": contact.get("street") or "",
+                "city": contact.get("city") or "",
+                "state": contact.get("state") or "",
+                "zip": contact.get("zip") or "",
+            }
+        )
+    return normalized_contacts
+
+
+def _filter_contacts(contacts, company_id=None, company_name=None, client_name=None):
+    """Apply contact filters used by the contact search UI."""
+    filtered_contacts = contacts
+    if company_id is not None:
+        filtered_contacts = [contact for contact in filtered_contacts if contact.get("company_id") == company_id]
+    if company_name:
+        filter_text = company_name.lower()
+        filtered_contacts = [
+            contact for contact in filtered_contacts
+            if filter_text in str(contact.get("company", "")).lower()
+        ]
+    if client_name:
+        filter_text = client_name.lower()
+        filtered_contacts = [
+            contact for contact in filtered_contacts
+            if filter_text in str(contact.get("client", "")).lower()
+        ]
+    return filtered_contacts
 
 
 class ContactBook:
@@ -128,10 +186,15 @@ class ContactBook:
 
             query += " ORDER BY co.company_name, c.last_name, c.first_name;"
 
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query, params)
-                    rows = cur.fetchall()
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(query, params)
+                        rows = cur.fetchall()
+            except (RuntimeError, OSError):
+                _notify_sql_fallback_once()
+                sample_contacts = _load_sample_contacts()
+                return _filter_contacts(sample_contacts, company_id, company_name, client_name)
 
             contacts = []
             for row in rows:
@@ -152,37 +215,49 @@ class ContactBook:
 
         def update_or_insert_company(company_id, company_name, street, city, state, zip_code):
             """Update existing company row or insert a new one by company_id."""
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1 FROM company WHERE company_id = %s;", (company_id,))
-                    exists = cur.fetchone() is not None
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1 FROM company WHERE company_id = %s;", (company_id,))
+                        exists = cur.fetchone() is not None
 
-                    if exists:
-                        cur.execute(
-                            """
-                            UPDATE company
-                            SET company_name = %s, street = %s, city = %s, state = %s, zip = %s
-                            WHERE company_id = %s;
-                            """,
-                            (company_name, street, city, state, zip_code, company_id),
-                        )
-                    else:
-                        cur.execute(
-                            """
-                            INSERT INTO company (company_id, company_name, street, city, state, zip)
-                            VALUES (%s, %s, %s, %s, %s, %s);
-                            """,
-                            (company_id, company_name, street, city, state, zip_code),
-                        )
-                conn.commit()
+                        if exists:
+                            cur.execute(
+                                """
+                                UPDATE company
+                                SET company_name = %s, street = %s, city = %s, state = %s, zip = %s
+                                WHERE company_id = %s;
+                                """,
+                                (company_name, street, city, state, zip_code, company_id),
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO company (company_id, company_name, street, city, state, zip)
+                                VALUES (%s, %s, %s, %s, %s, %s);
+                                """,
+                                (company_id, company_name, street, city, state, zip_code),
+                            )
+                    conn.commit()
+            except (RuntimeError, OSError) as exc:
+                logger.exception("Unable to update or insert company in PostgreSQL")
+                raise RuntimeError(
+                    "Database connection is unavailable. Sample contact data is read-only."
+                ) from exc
 
 
         def get_next_company_id():
             """Return the next available company_id for a new company."""
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT COALESCE(MAX(company_id), 0) + 1 FROM company;")
-                    return cur.fetchone()[0]
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT COALESCE(MAX(company_id), 0) + 1 FROM company;")
+                        return cur.fetchone()[0]
+            except (RuntimeError, OSError):
+                _notify_sql_fallback_once()
+                sample_contacts = _load_sample_contacts()
+                company_ids = [contact["company_id"] for contact in sample_contacts if isinstance(contact.get("company_id"), int)]
+                return (max(company_ids) if company_ids else 0) + 1
 
 
         def get_selected_contact():
@@ -299,7 +374,7 @@ class ContactBook:
                 self.filtered_contacts = []
                 update_contact_list()
                 update_company_list()
-            except Exception:
+            except (RuntimeError, ValueError, OSError):
                 logger.exception("Failed to add contact")
                 show_toast("Unable to add contact right now. Please try again.", "error")
                 
@@ -373,7 +448,7 @@ class ContactBook:
                 self.filtered_contacts = []
                 update_contact_list()
                 update_company_list()
-            except Exception:
+            except (RuntimeError, ValueError, OSError):
                 logger.exception("Failed to update contact")
                 show_toast("Unable to update contact right now. Please try again.", "error")
 
@@ -406,7 +481,7 @@ class ContactBook:
                 self.filtered_contacts = []
                 update_contact_list()
                 update_company_list()
-            except Exception:
+            except (RuntimeError, ValueError, OSError):
                 logger.exception("Failed to remove contact")
                 show_toast("Unable to remove contact right now. Please try again.", "error")
 
@@ -518,19 +593,31 @@ class ContactBook:
             Returns:
             None
             """
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT company_name
-                        FROM company
-                        WHERE company_name IS NOT NULL AND company_name <> ''
-                        ORDER BY company_name;
-                        """
-                    )
-                    rows = cur.fetchall()
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT company_name
+                            FROM company
+                            WHERE company_name IS NOT NULL AND company_name <> ''
+                            ORDER BY company_name;
+                            """
+                        )
+                        rows = cur.fetchall()
+                company_names = [row[0] for row in rows]
+            except (RuntimeError, OSError):
+                _notify_sql_fallback_once()
+                sample_contacts = _load_sample_contacts()
+                company_names = sorted(
+                    {
+                        contact.get("company", "")
+                        for contact in sample_contacts
+                        if contact.get("company")
+                    }
+                )
 
-            combo_company["values"] = [row[0] for row in rows]
+            combo_company["values"] = company_names
 
 
         def select_contact():
@@ -567,7 +654,9 @@ class ContactBook:
         # =========================================================================== #
         # ============================ Contact Book GUI ============================= #
         # =========================================================================== #
-        contact_book_window = Tk()
+        parent_window = tk._default_root
+        owns_event_loop = parent_window is None
+        contact_book_window = Tk() if owns_event_loop else tk.Toplevel(parent_window)
         contact_book_window.title("Contact Book")
         contact_book_window.config(padx=25, pady=25)
 
@@ -642,19 +731,41 @@ class ContactBook:
             if not selected_company:
                 return
 
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT company_id, street, city, state, zip
-                        FROM company
-                        WHERE company_name = %s
-                        ORDER BY company_id
-                        LIMIT 1;
-                        """,
-                        (selected_company,),
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT company_id, street, city, state, zip
+                            FROM company
+                            WHERE company_name = %s
+                            ORDER BY company_id
+                            LIMIT 1;
+                            """,
+                            (selected_company,),
+                        )
+                        row = cur.fetchone()
+            except (RuntimeError, OSError):
+                _notify_sql_fallback_once()
+                sample_contacts = _load_sample_contacts()
+                selected_contact = next(
+                    (
+                        contact
+                        for contact in sample_contacts
+                        if contact.get("company") == selected_company
+                    ),
+                    None,
+                )
+                if selected_contact:
+                    row = (
+                        selected_contact.get("company_id"),
+                        selected_contact.get("street"),
+                        selected_contact.get("city"),
+                        selected_contact.get("state"),
+                        selected_contact.get("zip"),
                     )
-                    row = cur.fetchone()
+                else:
+                    row = None
 
             if row:
                 entry_company_id.delete(0, tk.END)
@@ -670,18 +781,26 @@ class ContactBook:
         update_contact_list()
         update_company_list()
 
-        contact_book_window.mainloop()
+        if owns_event_loop:
+            contact_book_window.mainloop()
         
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.withdraw()  # Hide the root window
+    class _StandaloneVar:
+        def __init__(self):
+            self.value = ""
+
+        def set(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
 
     contact_book = ContactBook()
     contact_book.open_contact_book(
-        company_var=tk.StringVar(),
-        billing_address_var=tk.StringVar(),
-        contact_name_var=tk.StringVar(),
-        phone_var=tk.StringVar(),
-        email_var=tk.StringVar()
+        company_var=_StandaloneVar(),
+        billing_address_var=_StandaloneVar(),
+        contact_name_var=_StandaloneVar(),
+        phone_var=_StandaloneVar(),
+        email_var=_StandaloneVar(),
     )

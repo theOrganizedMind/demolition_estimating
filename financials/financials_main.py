@@ -1,5 +1,6 @@
 import statistics
 import logging
+from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import mplcursors
@@ -10,6 +11,7 @@ from prophet import Prophet
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+from pandas.io.sql import DatabaseError as PandasDatabaseError
 
 from revenue import revenue
 from postgresql import get_db_connection
@@ -17,23 +19,31 @@ from postgresql import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-# ========================================================================== #
-# ================================== INFO ================================== #
-# ========================================================================== #
-# Description of the Program:
-# ========================================================================== #
-# ================================== TODO ================================== #
-# ========================================================================== #
-# TODO: 
-# Add PostgreSQL variables to .env before running program. 
-# See postgresql.py for required parameters.
-# ========================================================================== #
 
 NUM_MONTHS = 12
 WORK_DAYS_IN_MONTH = 20
 DAILY_WORK_HOURS = 10
 PROFIT_MARGIN = 1.35
 NUM_EMPLOYEES = 112
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+MONTHLY_NUMBERS_SAMPLE_CSV = DATA_DIR / "monthly_numbers_sample_data_public.csv"
+EQUIPMENT_SAMPLE_CSV = DATA_DIR / "equipment_sample_data_public.csv"
+_SQL_FALLBACK_NOTICE_SHOWN = False
+
+DEFAULT_START_DATE = '2025-01'
+DEFAULT_END_DATE = '2025-12'
+
+
+def _notify_sql_fallback_once():
+    """Show a single SQL fallback warning message for this app run."""
+    global _SQL_FALLBACK_NOTICE_SHOWN
+    if _SQL_FALLBACK_NOTICE_SHOWN:
+        return
+    _SQL_FALLBACK_NOTICE_SHOWN = True
+    messagebox.showwarning(
+        "SQL Connection Failed",
+        "Failed to fetch data from SQL database. Falling back to sample data.",
+    )
 
 # =========================================================================== #
 # ======================== Get Data from PostgreSQL ========================= #
@@ -57,12 +67,38 @@ def fetch_monthly_numbers_from_postgresql(start_date, end_date):
         ORDER BY year_month;
     """
 
-    with get_db_connection() as conn:
-        df = pd.read_sql_query(
-            query,
-            conn,
-            params={"start_month": start_month, "end_month": end_month},
-        )
+    try:
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(
+                query,
+                conn,
+                params={"start_month": start_month, "end_month": end_month},
+            )
+    except (RuntimeError, OSError, PandasDatabaseError):
+        _notify_sql_fallback_once()
+        try:
+            df = pd.read_csv(
+                MONTHLY_NUMBERS_SAMPLE_CSV,
+                usecols=["year_month", "disposalcost", "expense", "sales", "payroll"],
+            ).rename(
+                columns={
+                    "disposalcost": "monthly_disposal_cost",
+                    "expense": "quickbooks_monthly_expenses",
+                    "sales": "monthly_sales",
+                    "payroll": "monthly_payroll",
+                }
+            )
+        except (FileNotFoundError, OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as sample_exc:
+            logger.exception(
+                "Unable to load monthly number sample data from %s",
+                MONTHLY_NUMBERS_SAMPLE_CSV,
+            )
+            raise RuntimeError(
+                f"Monthly numbers sample data is unavailable at '{MONTHLY_NUMBERS_SAMPLE_CSV}'."
+            ) from sample_exc
+
+        df['year_month'] = df['year_month'].astype(str)
+        df = df[(df['year_month'] >= start_month) & (df['year_month'] <= end_month)]
 
     if df.empty:
         raise ValueError(
@@ -158,15 +194,30 @@ def fetch_equipment_values():
     """Fetch equipment name and purchase price."""
     equipment_values = {}
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT equipment_name, purchase_price FROM equipment;"
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT equipment_name, purchase_price FROM equipment;"
+                )
+                rows = cur.fetchall()
+    except (RuntimeError, OSError):
+        _notify_sql_fallback_once()
+        try:
+            fallback_df = pd.read_csv(
+                EQUIPMENT_SAMPLE_CSV,
+                usecols=["equipment_name", "purchase_price"],
             )
-            rows = cur.fetchall()
+        except (FileNotFoundError, OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as sample_exc:
+            logger.exception("Unable to load equipment sample data from %s", EQUIPMENT_SAMPLE_CSV)
+            raise RuntimeError(
+                f"Equipment sample data is unavailable at '{EQUIPMENT_SAMPLE_CSV}'."
+            ) from sample_exc
+
+        rows = list(fallback_df.itertuples(index=False, name=None))
 
     for row in rows:
-        if len(row) < 2 or row[0] is None or row[1] is None:
+        if len(row) < 2 or row[0] is None or pd.isna(row[1]):
             continue
         equipment_values[str(row[0])] = float(row[1])
 
@@ -439,7 +490,7 @@ def calculate_financials():
         else:
             messagebox.showwarning("No Results", "Please choose a valid option.")
 
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError, PandasDatabaseError):
         logger.exception("Failed to calculate financial metrics")
         messagebox.showerror(
             "Financials Error",
@@ -712,7 +763,7 @@ def display_chart():
             messagebox.showwarning("No Results", 
                     "Sorry, we do not have a chart for that option to display.")
             
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError, PandasDatabaseError):
         logger.exception("Failed to generate chart")
         messagebox.showerror(
             "Chart Error",
@@ -733,11 +784,13 @@ if __name__=="__main__":
     start_date_label.grid(column=1, row=0, padx=5, pady=5)
     start_date_entry = tk.Entry(root, width=20)
     start_date_entry.grid(column=1, row=1, padx=5, pady=10)
+    start_date_entry.insert(0, DEFAULT_START_DATE)
 
     end_date_label = tk.Label(root, text="End Date YYYY-MM")
     end_date_label.grid(column=2, row=0, padx=5, pady=5)
     end_date_entry = tk.Entry(root, width=20)
     end_date_entry.grid(column=2, row=1, padx=5, pady=10)
+    end_date_entry.insert(0, DEFAULT_END_DATE)
 
     options = ttk.Combobox(root, state="readonly", 
                             values=[
@@ -765,5 +818,6 @@ if __name__=="__main__":
     chart_button = ttk.Button(root, text="Display Chart", command=display_chart)
     chart_button.grid(column=2, row=3, padx=5, pady=5)
 
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
 
     root.mainloop()

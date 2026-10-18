@@ -79,6 +79,6 @@ estimate_equipment_button = Button(root, text="Estimate",
 estimate_equipment_button.grid(column=1, row=5, padx=5, pady=5)
 
 # Set the protocol for window closing
-root.protocol("WM_DELETE_WINDOW")
+root.protocol("WM_DELETE_WINDOW", root.destroy)
 
 root.mainloop()

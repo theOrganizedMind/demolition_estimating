@@ -668,26 +668,29 @@ class ProjectManagementApp:
         """Build Charts tab controls, chart canvas, and chart details tree."""
         controls = ttk.LabelFrame(self.tab_gantt, text="Chart Controls")
         controls.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
-        ttk.Label(controls, text="Project Type").grid(row=0, column=0, sticky="e", padx=6, pady=6)
+        filter_fields = ttk.Frame(controls)
+        filter_fields.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+
+        ttk.Label(filter_fields, text="Project Type").grid(row=0, column=0, sticky="e", padx=6, pady=6)
         self.chart_project_type_combo = ttk.Combobox(
-            controls,
+            filter_fields,
             state="normal",
             width=22,
             values=PROJECT_TYPE_OPTIONS,
         )
         self.chart_project_type_combo.grid(row=0, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(controls, text="Approx SqFt").grid(row=0, column=2, sticky="e", padx=6, pady=6)
-        self.chart_sqft_entry = ttk.Entry(controls, width=16)
+        ttk.Label(filter_fields, text="Approx SqFt").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        self.chart_sqft_entry = ttk.Entry(filter_fields, width=16)
         self.chart_sqft_entry.grid(row=0, column=3, sticky="w", padx=6, pady=6)
 
-        ttk.Label(controls, text="Estimator").grid(row=0, column=4, sticky="e", padx=6, pady=6)
-        self.chart_estimator_combo = ttk.Combobox(controls, state="normal", width=22)
+        ttk.Label(filter_fields, text="Estimator").grid(row=0, column=4, sticky="e", padx=6, pady=6)
+        self.chart_estimator_combo = ttk.Combobox(filter_fields, state="normal", width=22)
         self.chart_estimator_combo.grid(row=0, column=5, sticky="w", padx=6, pady=6)
 
-        ttk.Label(controls, text="Status").grid(row=0, column=6, sticky="e", padx=6, pady=6)
+        ttk.Label(filter_fields, text="Status").grid(row=0, column=6, sticky="e", padx=6, pady=6)
         self.chart_status_combo = ttk.Combobox(
-            controls,
+            filter_fields,
             state="readonly",
             width=18,
             textvariable=self.chart_status_filter_var,
@@ -696,56 +699,60 @@ class ProjectManagementApp:
         self.chart_status_combo.grid(row=0, column=7, sticky="w", padx=6, pady=6)
         self.chart_status_combo.set("All Statuses")
 
-        ttk.Label(controls, text="Chart Option").grid(row=1, column=4, sticky="e", padx=6, pady=6)
+        ttk.Label(filter_fields, text="Chart Option").grid(row=1, column=0, sticky="e", padx=6, pady=6)
         self.chart_option_combo = ttk.Combobox(
-            controls,
+            filter_fields,
             state="readonly",
             width=18,
             values=("Project", "Estimator", "Status"),
         )
-        self.chart_option_combo.grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        self.chart_option_combo.grid(row=1, column=1, sticky="w", padx=6, pady=6)
         self.chart_option_combo.set("Project")
 
-        ttk.Label(controls, text="Start Date").grid(row=1, column=0, sticky="e", padx=6, pady=6)
+        ttk.Label(filter_fields, text="Start Date").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         if DateEntry is not None:
-            self.gantt_start_filter = DateEntry(controls, width=14, date_pattern="yyyy-mm-dd")
+            self.gantt_start_filter = DateEntry(filter_fields, width=14, date_pattern="yyyy-mm-dd")
             self.gantt_start_filter.set_date(parse_date(DEFAULT_CHART_START_DATE, "Chart Start Date"))
         else:
-            self.gantt_start_filter = ttk.Entry(controls, width=17)
+            self.gantt_start_filter = ttk.Entry(filter_fields, width=17)
             self.gantt_start_filter.insert(0, DEFAULT_CHART_START_DATE)
-        self.gantt_start_filter.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        self.gantt_start_filter.grid(row=1, column=3, sticky="w", padx=6, pady=6)
 
-        ttk.Label(controls, text="End Date").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(filter_fields, text="End Date").grid(row=1, column=4, sticky="e", padx=6, pady=6)
         if DateEntry is not None:
-            self.gantt_end_filter = DateEntry(controls, width=14, date_pattern="yyyy-mm-dd")
+            self.gantt_end_filter = DateEntry(filter_fields, width=14, date_pattern="yyyy-mm-dd")
             self.gantt_end_filter.set_date(parse_date(DEFAULT_CHART_END_DATE, "Chart End Date"))
         else:
-            self.gantt_end_filter = ttk.Entry(controls, width=17)
+            self.gantt_end_filter = ttk.Entry(filter_fields, width=17)
             self.gantt_end_filter.insert(0, DEFAULT_CHART_END_DATE)
-        self.gantt_end_filter.grid(row=1, column=3, sticky="w", padx=6, pady=6)
+        self.gantt_end_filter.grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        filter_fields.columnconfigure(8, weight=1)
 
-        ttk.Button(controls, text="Search", command=lambda: self._safe_execute(self.refresh_gantt)).grid(
-            row=1,
-            column=4,
+        button_row = ttk.Frame(controls)
+        button_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 6))
+        ttk.Button(button_row, text="Search", command=lambda: self._safe_execute(self.refresh_gantt)).grid(
+            row=0,
+            column=0,
             sticky="w",
             padx=6,
-            pady=6,
+            pady=4,
         )
-        ttk.Button(controls, text="Display Chart", command=lambda: self._safe_execute(self.display_chart)).grid(
-            row=1,
-            column=7,
+        ttk.Button(button_row, text="Display Chart", command=lambda: self._safe_execute(self.display_chart)).grid(
+            row=0,
+            column=1,
             sticky="w",
             padx=6,
-            pady=6,
+            pady=4,
         )
-        ttk.Button(controls, text="Clear", command=lambda: self._safe_execute(self.clear_chart_filters)).grid(
-            row=1,
-            column=8,
+        ttk.Button(button_row, text="Clear", command=lambda: self._safe_execute(self.clear_chart_filters)).grid(
+            row=0,
+            column=2,
             sticky="w",
             padx=6,
-            pady=6,
+            pady=4,
         )
-        controls.columnconfigure(9, weight=1)
+        button_row.columnconfigure(3, weight=1)
+        controls.columnconfigure(0, weight=1)
 
         chart_frame = ttk.LabelFrame(self.tab_gantt, text="Chart Preview")
         chart_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=8)
@@ -758,6 +765,7 @@ class ProjectManagementApp:
             "bid_number",
             "address",
             "project_type",
+            "estimator",
             "project_sqft",
             "duration_days",
             "bid_price",
@@ -766,8 +774,8 @@ class ProjectManagementApp:
             "p_and_l_percent",
         )
         self.gantt_tree = ttk.Treeview(details_frame, columns=columns, show="headings", height=8)
-        headings = ("Bid Number", "Address", "Project Type", "SqFt", "Duration (Days)", "Bid Price", "Job Cost", "P & L", "P & L %")
-        widths = (120, 260, 170, 90, 120, 120, 120, 120, 100)
+        headings = ("Bid Number", "Address", "Project Type", "Estimator", "SqFt", "Duration (Days)", "Bid Price", "Job Cost", "P & L", "P & L %")
+        widths = (120, 240, 160, 150, 90, 120, 120, 120, 120, 100)
         for col, text, width in zip(columns, headings, widths):
             self.gantt_tree.heading(col, text=text)
             self.gantt_tree.column(col, width=width, anchor="w")
@@ -1755,6 +1763,7 @@ class ProjectManagementApp:
                     row["bid_number"],
                     row["address"],
                     row["project_type"],
+                    row["estimator"],
                     row["project_sqft"],
                     row["duration_days"],
                     format_currency(float(row["bid_price"])),
@@ -1875,8 +1884,20 @@ class ProjectManagementApp:
             _, axes = plt.subplots(2, 2, figsize=(13, 9))
             ax_bar, ax_line, ax_pie, ax_metrics = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
 
-            ax_bar.bar([x - (bar_width / 2) for x in x_positions], bid_prices, width=bar_width, color="#64B5F6", label="Total Bid Price")
-            ax_bar.bar([x + (bar_width / 2) for x in x_positions], job_costs, width=bar_width, color="#FFB74D", label="Total Job Cost")
+            estimator_bid_bars = ax_bar.bar(
+                [x - (bar_width / 2) for x in x_positions],
+                bid_prices,
+                width=bar_width,
+                color="#64B5F6",
+                label="Total Bid Price",
+            )
+            estimator_job_bars = ax_bar.bar(
+                [x + (bar_width / 2) for x in x_positions],
+                job_costs,
+                width=bar_width,
+                color="#FFB74D",
+                label="Total Job Cost",
+            )
             ax_bar.set_xticks(x_positions)
             ax_bar.set_xticklabels(labels, rotation=20, ha="right")
             ax_bar.set_title("Estimator Totals")
@@ -1884,7 +1905,7 @@ class ProjectManagementApp:
             ax_bar.legend(loc="upper right")
             ax_bar.grid(axis="y", linewidth=0.3)
 
-            ax_line.plot(x_positions, bid_counts, marker="o", color="#7E57C2", label="Number of Bids")
+            estimator_bid_line, = ax_line.plot(x_positions, bid_counts, marker="o", color="#7E57C2", label="Number of Bids")
             ax_line.set_xticks(x_positions)
             ax_line.set_xticklabels(labels, rotation=20, ha="right")
             ax_line.set_title("Bids per Estimator")
@@ -1902,12 +1923,48 @@ class ProjectManagementApp:
             )
             ax_pie.set_title("Bid vs Job Cost Distribution")
 
-            ax_metrics.bar(x_positions, p_and_l_values, color="#66BB6A")
+            estimator_pl_bars = ax_metrics.bar(x_positions, p_and_l_values, color="#66BB6A")
             ax_metrics.set_xticks(x_positions)
             ax_metrics.set_xticklabels(labels, rotation=20, ha="right")
             ax_metrics.set_title("Total P & L by Estimator")
             ax_metrics.set_ylabel("P & L ($)")
             ax_metrics.grid(axis="y", linewidth=0.3)
+
+            if mplcursors is not None:
+                estimator_totals_cursor = mplcursors.cursor(
+                    [*estimator_bid_bars.patches, *estimator_job_bars.patches],
+                    hover=True,
+                )
+
+                @estimator_totals_cursor.connect("add")
+                def _on_add_estimator_totals(sel) -> None:
+                    patch = sel.artist
+                    x_center = patch.get_x() + (patch.get_width() / 2)
+                    estimator_index = int(round(x_center))
+                    estimator_index = max(0, min(estimator_index, len(labels) - 1))
+                    dataset = "Total Bid Price" if patch in estimator_bid_bars.patches else "Total Job Cost"
+                    amount = patch.get_height()
+                    sel.annotation.set_text(f"{labels[estimator_index]}\n{dataset}: {format_currency(float(amount))}")
+
+                estimator_bids_cursor = mplcursors.cursor([estimator_bid_line], hover=True)
+
+                @estimator_bids_cursor.connect("add")
+                def _on_add_estimator_bids(sel) -> None:
+                    point_index = int(sel.index)
+                    point_index = max(0, min(point_index, len(labels) - 1))
+                    sel.annotation.set_text(f"{labels[point_index]}\nNumber of Bids: {bid_counts[point_index]}")
+
+                estimator_pl_cursor = mplcursors.cursor(estimator_pl_bars.patches, hover=True)
+
+                @estimator_pl_cursor.connect("add")
+                def _on_add_estimator_pl(sel) -> None:
+                    patch = sel.artist
+                    x_center = patch.get_x() + (patch.get_width() / 2)
+                    estimator_index = int(round(x_center))
+                    estimator_index = max(0, min(estimator_index, len(labels) - 1))
+                    sel.annotation.set_text(
+                        f"{labels[estimator_index]}\nTotal P & L: {format_currency(float(patch.get_height()))}"
+                    )
 
             plt.tight_layout()
             plt.show()
@@ -1927,15 +1984,26 @@ class ProjectManagementApp:
         bid_prices = [status_totals[label]["bid_price"] for label in labels]
         job_costs = [status_totals[label]["job_cost"] for label in labels]
         bid_counts = [int(status_totals[label]["bids"]) for label in labels]
-        p_and_l_values = [status_totals[label]["p_and_l"] for label in labels]
         x_positions = list(range(len(labels)))
         bar_width = 0.35
 
         _, axes = plt.subplots(2, 2, figsize=(13, 9))
         ax_bar, ax_line, ax_pie, ax_metrics = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
 
-        ax_bar.bar([x - (bar_width / 2) for x in x_positions], bid_prices, width=bar_width, color="#90CAF9", label="Total Bid Price")
-        ax_bar.bar([x + (bar_width / 2) for x in x_positions], job_costs, width=bar_width, color="#FFCC80", label="Total Job Cost")
+        status_bid_bars = ax_bar.bar(
+            [x - (bar_width / 2) for x in x_positions],
+            bid_prices,
+            width=bar_width,
+            color="#90CAF9",
+            label="Total Bid Price",
+        )
+        status_job_bars = ax_bar.bar(
+            [x + (bar_width / 2) for x in x_positions],
+            job_costs,
+            width=bar_width,
+            color="#FFCC80",
+            label="Total Job Cost",
+        )
         ax_bar.set_xticks(x_positions)
         ax_bar.set_xticklabels(labels)
         ax_bar.set_title("Status Totals")
@@ -1959,12 +2027,37 @@ class ProjectManagementApp:
         )
         ax_pie.set_title("Bid Count Share by Status")
 
-        ax_metrics.bar(x_positions, p_and_l_values, color="#26A69A")
+        status_bid_only_bars = ax_metrics.bar(x_positions, bid_prices, color="#26A69A")
         ax_metrics.set_xticks(x_positions)
         ax_metrics.set_xticklabels(labels)
-        ax_metrics.set_title("Total P & L by Status")
-        ax_metrics.set_ylabel("P & L ($)")
+        ax_metrics.set_title("Total Bid Price by Status")
+        ax_metrics.set_ylabel("Bid Price ($)")
         ax_metrics.grid(axis="y", linewidth=0.3)
+
+        if mplcursors is not None:
+            status_totals_cursor = mplcursors.cursor([*status_bid_bars.patches, *status_job_bars.patches], hover=True)
+
+            @status_totals_cursor.connect("add")
+            def _on_add_status_totals(sel) -> None:
+                patch = sel.artist
+                x_center = patch.get_x() + (patch.get_width() / 2)
+                status_index = int(round(x_center))
+                status_index = max(0, min(status_index, len(labels) - 1))
+                dataset = "Total Bid Price" if patch in status_bid_bars.patches else "Total Job Cost"
+                amount = patch.get_height()
+                sel.annotation.set_text(f"{labels[status_index]}\n{dataset}: {format_currency(float(amount))}")
+
+            status_bid_price_cursor = mplcursors.cursor(status_bid_only_bars.patches, hover=True)
+
+            @status_bid_price_cursor.connect("add")
+            def _on_add_status_bid_price(sel) -> None:
+                patch = sel.artist
+                x_center = patch.get_x() + (patch.get_width() / 2)
+                status_index = int(round(x_center))
+                status_index = max(0, min(status_index, len(labels) - 1))
+                sel.annotation.set_text(
+                    f"{labels[status_index]}\nTotal Bid Price: {format_currency(float(patch.get_height()))}"
+                )
 
         plt.tight_layout()
         plt.show()
@@ -1996,9 +2089,11 @@ class ProjectManagementApp:
 
         summary_lines = [
             f"Matching Projects: {len(rows)}",
+            "Totals:",
             f"Total Bid Price: {format_currency(total_bid)}",
             f"Total Job Cost: {format_currency(total_cost)}",
             f"Total P & L: {format_currency(total_pl)}",
+            "Averages:",
             f"Average Bid Price: {format_currency(average_bid)}",
             f"Average Job Cost: {format_currency(average_cost)}",
             f"Average P & L: {format_currency(average_pl)}",
